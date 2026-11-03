@@ -1,5 +1,13 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
@@ -27,13 +35,17 @@ test("install.sh copies the v1 entry, the shared library and the v2 entry", () =
 
     const v1Entry = join(configDir, "plugin", "opencode-auto-compact.ts");
     const v2Entry = join(configDir, "plugins", "opencode-auto-compact.ts");
-    const lib = join(configDir, "plugin", "opencode-auto-compact", "index.js");
-    const pkg = join(configDir, "plugin", "opencode-auto-compact", "package.json");
+    const libDir = join(configDir, "plugin", "opencode-auto-compact");
+    const lib = join(libDir, "index.js");
+    const pkg = join(libDir, "package.json");
 
     for (const file of [v1Entry, v2Entry, lib, pkg]) {
       assert.ok(existsSync(file), `missing ${file}`);
       assert.equal(statSync(file).mode & 0o777, 0o644, `unexpected mode for ${file}`);
     }
+    // The host may run as another account, so the library dir must stay
+    // world-traversable (mktemp -d + mv used to leave it at 0700).
+    assert.equal(statSync(libDir).mode & 0o777, 0o755, "library dir must be world-traversable");
     assert.match(readFileSync(v1Entry, "utf8"), /\.\/opencode-auto-compact\/index\.js/);
     assert.match(readFileSync(v2Entry, "utf8"), /\.\.\/plugin\/opencode-auto-compact\/index\.js/);
     assert.equal(JSON.parse(readFileSync(pkg, "utf8")).type, "module");
@@ -49,6 +61,21 @@ test("install.sh is idempotent", () => {
     run([], configDir);
     const v1Entry = join(configDir, "plugin", "opencode-auto-compact.ts");
     assert.ok(existsSync(v1Entry));
+  } finally {
+    rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
+test("install.sh repairs a stale library dir that is not world-traversable", () => {
+  const configDir = sandbox();
+  try {
+    const libDir = join(configDir, "plugin", "opencode-auto-compact");
+    mkdirSync(libDir, { recursive: true });
+    chmodSync(libDir, 0o700);
+
+    run([], configDir);
+
+    assert.equal(statSync(libDir).mode & 0o777, 0o755);
   } finally {
     rmSync(configDir, { recursive: true, force: true });
   }

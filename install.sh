@@ -79,6 +79,26 @@ write_entry() {
   fi
 }
 
+# The host imports the entry from its own process account, which is not
+# necessarily the account that ran install.sh. Directories need other-execute
+# and files need other-read; anything narrower makes the import fail before a
+# hook exists, so the plugin silently does nothing. Fail closed here instead of
+# leaving a broken install behind.
+verify_installed_permissions() {
+  local path mode
+  for path in "${LIB_DIR}" "${LIB_DIR}"/*.js "${LIB_DIR}/package.json" "${V1_ENTRY}" "${V2_ENTRY}"; do
+    [[ -e "${path}" ]] || die "missing installed path: ${path}"
+    mode="$(stat -c '%a' -- "${path}")"
+    if [[ -d "${path}" ]]; then
+      (( (8#${mode} & 8#005) == 8#005 )) ||
+        die "installed dir is not traversable by other users: ${path} (mode ${mode}, owner $(stat -c '%U' -- "${path}"), running as $(id -un))"
+    else
+      (( (8#${mode} & 8#004) == 8#004 )) ||
+        die "installed file is not readable by other users: ${path} (mode ${mode}, owner $(stat -c '%U' -- "${path}"), running as $(id -un))"
+    fi
+  done
+}
+
 install_plugin() {
   [[ -f "${DIST_DIR}/index.js" ]] ||
     die "dist/index.js is missing. Build it first: npm ci && npm run build"
@@ -96,6 +116,11 @@ install_plugin() {
 
   local staging backup
   staging="$(mktemp -d "${V1_DIR}/.${PLUGIN_NAME}.stage.XXXXXX")"
+  # mktemp -d creates 0700 (plus inherited setgid) and `mv` preserves that mode.
+  # The host may run as a different account than the installer, so the module
+  # dir must be traversable by other users or `import` fails with EACCES before
+  # any hook is registered (silent plugin load failure).
+  chmod 0755 -- "${staging}"
   backup="${LIB_DIR}.old.$$"
   # shellcheck disable=SC2064 # expand the temp paths now, not at exit time
   trap "rm -rf -- '${staging}' '${backup}'" EXIT
@@ -121,10 +146,12 @@ EOF
     die "failed to activate ${LIB_DIR}"
   fi
   rm -rf -- "${backup}"
+  chmod 0755 -- "${LIB_DIR}"
   trap - EXIT
 
   write_entry "${V1_SOURCE}" "${V1_ENTRY}"
   write_entry "${V2_SOURCE}" "${V2_ENTRY}"
+  verify_installed_permissions
 
   local module_count=0
   local module
