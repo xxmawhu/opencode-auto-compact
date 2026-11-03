@@ -5,6 +5,9 @@
 // The v1 loader treats every export of a local plugin module as a plugin
 // function, so this file exports functions only. Older v1 hosts call the
 // default export with the classic plugin input.
+//
+// Keep this banner verbatim: install.sh copies this file into the host config,
+// so changes here are visible after a pull-triggered install.
 import hybrid from "./opencode-auto-compact/index.js";
 
 const createPlugin = (input) => hybrid.server(input);
