@@ -1,0 +1,37 @@
+# Node / TypeScript
+node_modules/
+coverage/
+*.tsbuildinfo
+
+# dist/ is committed: install.sh copies the built plugin without a build step
+
+# 运行时目录（不进入版本控制）
+issues/
+plan/
+end_task/
+data/
+memory/
+!memory/.gitkeep
+tmp-issues/
+/.var/
+
+# 测试产物（install.sh 沙箱目录）
+tests/.tmp*/
+
+# 项目根 AGENTS.md 由模板分发（git init --template / install.sh）生成，不入库
+AGENTS.md
+
+# 日志
+log/
+*.log
+
+# Notion 页面 JSON（含页面 ID，不入库，联动 sync-notion）
+notion-docs/
+
+# 系统
+.npm/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~

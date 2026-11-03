@@ -1,0 +1,59 @@
+{
+  "name": "opencode-auto-compact",
+  "version": "0.1.0",
+  "description": "OpenCode plugin (v1 + v2): compact an idle session once its context exceeds a fixed 200000-token threshold.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "opencode-v2",
+    "compaction",
+    "compact",
+    "context"
+  ],
+  "engines": {
+    "node": ">=18.18"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "install",
+    "install.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src install tests",
+    "format": "prettier --write \"{src,install,tests}/**/*.{ts,mjs,json}\" \"*.{json,md,yaml,yml}\"",
+    "format:check": "prettier --check \"{src,install,tests}/**/*.{ts,mjs,json}\" \"*.{json,md,yaml,yml}\"",
+    "test": "npm run build && node --test tests/*.test.mjs",
+    "check": "npm run lint && npm run typecheck && npm run test"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.16.0",
+    "@types/node": "^18.19.0",
+    "eslint": "^9.16.0",
+    "prettier": "^3.4.0",
+    "typescript": "^5.7.0",
+    "typescript-eslint": "^8.18.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xxmawhu/opencode-auto-compact.git"
+  },
+  "homepage": "https://github.com/xxmawhu/opencode-auto-compact#readme",
+  "bugs": {
+    "url": "https://github.com/xxmawhu/opencode-auto-compact/issues"
+  }
+}
