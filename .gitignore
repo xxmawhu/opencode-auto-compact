@@ -18,8 +18,9 @@ tmp-issues/
 # 测试产物（install.sh 沙箱目录）
 tests/.tmp*/
 
-# 项目根 AGENTS.md 由模板分发（git init --template / install.sh）生成，不入库
-AGENTS.md
+# 项目根禁止任何形态 AGENTS.md（软链/实体/断链/目录），规则唯一来源 ~/.config/opencode/AGENTS.md
+# 此条为防御性忽略，避免误入库
+/AGENTS.md
 
 # 日志
 log/
