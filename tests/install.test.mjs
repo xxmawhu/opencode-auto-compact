@@ -28,6 +28,17 @@ function run(args, configDir) {
   });
 }
 
+test("entry templates default-export the shared definition object", () => {
+  for (const name of ["opencode-auto-compact.ts", "opencode-auto-compact-v2.ts"]) {
+    const source = readFileSync(join(ROOT, "install", name), "utf8");
+    // opencode2 rejects a function default export with
+    // SchemaError(Expected object at ["default"]), so the entry must re-export
+    // the shared object rather than wrap it in a function.
+    assert.match(source, /export default hybrid;/, `${name} must re-export the hybrid object`);
+    assert.doesNotMatch(source, /export const Plugin/, `${name} must not add function exports`);
+  }
+});
+
 test("install.sh copies the v1 entry, the shared library and the v2 entry", () => {
   const configDir = sandbox();
   try {

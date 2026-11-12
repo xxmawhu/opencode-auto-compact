@@ -2,15 +2,18 @@
 // <config>/plugin/opencode-auto-compact.ts next to the built library directory
 // <config>/plugin/opencode-auto-compact/.
 //
-// The v1 loader treats every export of a local plugin module as a plugin
-// function, so this file exports functions only. Older v1 hosts call the
-// default export with the classic plugin input.
+// Both host generations read the default export and nothing else:
+//
+// - opencode 1.x calls `server(input)` and uses the returned hook table.
+// - opencode 2.x requires a definition object and reads `id` / `setup`.
+//
+// The shared library already exports one object carrying `id`, `setup` and
+// `server`, so this entry re-exports it unchanged instead of wrapping it in a
+// function. A function default export fails the v2 contract with
+// `SchemaError(Expected object at ["default"])`.
 //
 // Keep this banner verbatim: install.sh copies this file into the host config,
 // so changes here are visible after a pull-triggered install.
 import hybrid from "./opencode-auto-compact/index.js";
 
-const createPlugin = (input) => hybrid.server(input);
-
-export const Plugin = createPlugin;
-export default createPlugin;
+export default hybrid;

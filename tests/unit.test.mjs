@@ -204,6 +204,14 @@ function fakeClient() {
   };
 }
 
+test("the default export satisfies both host contracts", () => {
+  // opencode2 requires an object with id + setup; opencode 1.x calls server().
+  assert.equal(typeof hybrid.id, "string");
+  assert.ok(hybrid.id.length > 0);
+  assert.equal(typeof hybrid.setup, "function");
+  assert.equal(typeof hybrid.server, "function");
+});
+
 test("the v1 and v2 entries share one process-wide runtime", async () => {
   const first = await hybrid.server({ client: fakeClient() });
   assert.equal(typeof first.dispose, "function");

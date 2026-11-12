@@ -2,17 +2,15 @@
 // <config>/plugins/opencode-auto-compact.ts. The shared library stays in the
 // v1 plugin directory so only one copy is installed.
 //
-// Hosts that still call the default export as a classic plugin function get
-// the v1 hook map. Hosts that read `id` / `setup` get the v2 server part.
+// Both host generations read the default export and nothing else:
+//
+// - opencode 2.x requires a definition object and reads `id` / `setup`.
+// - opencode 1.x calls `server(input)` on that same object.
+//
+// The shared library already exports one object carrying `id`, `setup` and
+// `server`, so this entry re-exports it unchanged instead of wrapping it in a
+// function. A function default export fails the v2 contract with
+// `SchemaError(Expected object at ["default"])`.
 import hybrid from "../plugin/opencode-auto-compact/index.js";
 
-const createPlugin = (input) => {
-  if (input && input.client && input.client.session) return hybrid.server(input);
-  return {};
-};
-
-createPlugin.id = hybrid.id;
-createPlugin.setup = (ctx) => hybrid.setup(ctx);
-
-export const Plugin = createPlugin;
-export default createPlugin;
+export default hybrid;
