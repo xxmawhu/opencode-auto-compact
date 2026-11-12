@@ -1,6 +1,7 @@
 // OpenCode v1 legacy local plugin entry. install.sh copies this file to
-// <config>/plugin/opencode-auto-compact.ts next to the built library directory
-// <config>/plugin/opencode-auto-compact/.
+// <config>/plugin/opencode-auto-compact.ts. The built library lives outside
+// both host scan directories, at <config>/opencode-auto-compact-lib/, so the
+// host never loads it as an extra plugin entry.
 //
 // Both host generations read the default export and nothing else:
 //
@@ -14,6 +15,6 @@
 //
 // Keep this banner verbatim: install.sh copies this file into the host config,
 // so changes here are visible after a pull-triggered install.
-import hybrid from "./opencode-auto-compact/index.js";
+import hybrid from "../opencode-auto-compact-lib/index.js";
 
 export default hybrid;

@@ -1,6 +1,7 @@
 // OpenCode v2 discovery entry. install.sh copies this file to
-// <config>/plugins/opencode-auto-compact.ts. The shared library stays in the
-// v1 plugin directory so only one copy is installed.
+// <config>/plugins/opencode-auto-compact.ts. The shared library lives outside
+// both host scan directories, at <config>/opencode-auto-compact-lib/, so only
+// the entry files are loaded.
 //
 // Both host generations read the default export and nothing else:
 //
@@ -11,6 +12,6 @@
 // `server`, so this entry re-exports it unchanged instead of wrapping it in a
 // function. A function default export fails the v2 contract with
 // `SchemaError(Expected object at ["default"])`.
-import hybrid from "../plugin/opencode-auto-compact/index.js";
+import hybrid from "../opencode-auto-compact-lib/index.js";
 
 export default hybrid;

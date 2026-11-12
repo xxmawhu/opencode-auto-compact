@@ -46,7 +46,9 @@ test("install.sh copies the v1 entry, the shared library and the v2 entry", () =
 
     const v1Entry = join(configDir, "plugin", "opencode-auto-compact.ts");
     const v2Entry = join(configDir, "plugins", "opencode-auto-compact.ts");
-    const libDir = join(configDir, "plugin", "opencode-auto-compact");
+    // The shared library must stay outside `plugin/` and `plugins/`: opencode2
+    // loads every first-level directory under those paths as a plugin entry.
+    const libDir = join(configDir, "opencode-auto-compact-lib");
     const lib = join(libDir, "index.js");
     const pkg = join(libDir, "package.json");
 
@@ -57,8 +59,9 @@ test("install.sh copies the v1 entry, the shared library and the v2 entry", () =
     // The host may run as another account, so the library dir must stay
     // world-traversable (mktemp -d + mv used to leave it at 0700).
     assert.equal(statSync(libDir).mode & 0o777, 0o755, "library dir must be world-traversable");
-    assert.match(readFileSync(v1Entry, "utf8"), /\.\/opencode-auto-compact\/index\.js/);
-    assert.match(readFileSync(v2Entry, "utf8"), /\.\.\/plugin\/opencode-auto-compact\/index\.js/);
+    assert.equal(existsSync(join(configDir, "plugin", "opencode-auto-compact")), false);
+    assert.match(readFileSync(v1Entry, "utf8"), /\.\.\/opencode-auto-compact-lib\/index\.js/);
+    assert.match(readFileSync(v2Entry, "utf8"), /\.\.\/opencode-auto-compact-lib\/index\.js/);
     assert.equal(JSON.parse(readFileSync(pkg, "utf8")).type, "module");
   } finally {
     rmSync(configDir, { recursive: true, force: true });
@@ -80,13 +83,29 @@ test("install.sh is idempotent", () => {
 test("install.sh repairs a stale library dir that is not world-traversable", () => {
   const configDir = sandbox();
   try {
-    const libDir = join(configDir, "plugin", "opencode-auto-compact");
+    const libDir = join(configDir, "opencode-auto-compact-lib");
     mkdirSync(libDir, { recursive: true });
     chmodSync(libDir, 0o700);
 
     run([], configDir);
 
     assert.equal(statSync(libDir).mode & 0o777, 0o755);
+  } finally {
+    rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
+test("install.sh removes the legacy library dir from the scanned plugin/ path", () => {
+  const configDir = sandbox();
+  try {
+    const legacyLib = join(configDir, "plugin", "opencode-auto-compact");
+    mkdirSync(legacyLib, { recursive: true });
+
+    run([], configDir);
+
+    // While this directory exists, opencode2 loads it as an extra plugin entry.
+    assert.equal(existsSync(legacyLib), false);
+    assert.ok(existsSync(join(configDir, "plugin", "opencode-auto-compact.ts")));
   } finally {
     rmSync(configDir, { recursive: true, force: true });
   }
@@ -99,6 +118,7 @@ test("install.sh --uninstall removes every installed file", () => {
     run(["--uninstall"], configDir);
     assert.equal(existsSync(join(configDir, "plugin", "opencode-auto-compact.ts")), false);
     assert.equal(existsSync(join(configDir, "plugins", "opencode-auto-compact.ts")), false);
+    assert.equal(existsSync(join(configDir, "opencode-auto-compact-lib")), false);
     assert.equal(existsSync(join(configDir, "plugin", "opencode-auto-compact")), false);
   } finally {
     rmSync(configDir, { recursive: true, force: true });
