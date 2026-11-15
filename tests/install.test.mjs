@@ -50,9 +50,10 @@ test("install.sh copies the v1 entry, the shared library and the v2 entry", () =
     // loads every first-level directory under those paths as a plugin entry.
     const libDir = join(configDir, "opencode-auto-compact-lib");
     const lib = join(libDir, "index.js");
+    const libEntry = join(libDir, "index.mjs");
     const pkg = join(libDir, "package.json");
 
-    for (const file of [v1Entry, v2Entry, lib, pkg]) {
+    for (const file of [v1Entry, v2Entry, lib, libEntry, pkg]) {
       assert.ok(existsSync(file), `missing ${file}`);
       assert.equal(statSync(file).mode & 0o777, 0o644, `unexpected mode for ${file}`);
     }
@@ -60,21 +61,35 @@ test("install.sh copies the v1 entry, the shared library and the v2 entry", () =
     // world-traversable (mktemp -d + mv used to leave it at 0700).
     assert.equal(statSync(libDir).mode & 0o777, 0o755, "library dir must be world-traversable");
     assert.equal(existsSync(join(configDir, "plugin", "opencode-auto-compact")), false);
-    assert.match(readFileSync(v1Entry, "utf8"), /\.\.\/opencode-auto-compact-lib\/index\.js/);
-    assert.match(readFileSync(v2Entry, "utf8"), /\.\.\/opencode-auto-compact-lib\/index\.js/);
+    assert.match(readFileSync(v1Entry, "utf8"), /\.\.\/opencode-auto-compact-lib\/index\.mjs/);
+    assert.match(readFileSync(v2Entry, "utf8"), /\.\.\/opencode-auto-compact-lib\/index\.mjs/);
+    // Contract R2 names index.mjs as the import target; it must re-export the
+    // built ES module rather than duplicate the library.
+    assert.match(readFileSync(libEntry, "utf8"), /export \{ default \} from "\.\/index\.js"/);
     assert.equal(JSON.parse(readFileSync(pkg, "utf8")).type, "module");
   } finally {
     rmSync(configDir, { recursive: true, force: true });
   }
 });
 
-test("install.sh is idempotent", () => {
+test("install.sh is idempotent and keeps timestamps when content is unchanged", async () => {
   const configDir = sandbox();
   try {
     run([], configDir);
+    const files = [
+      join(configDir, "plugin", "opencode-auto-compact.ts"),
+      join(configDir, "plugins", "opencode-auto-compact.ts"),
+      join(configDir, "opencode-auto-compact-lib", "index.js"),
+      join(configDir, "opencode-auto-compact-lib", "index.mjs"),
+      join(configDir, "opencode-auto-compact-lib", "package.json"),
+    ];
+    const before = files.map((file) => statSync(file).mtimeMs);
+    // Contract R6: unchanged content must not look like a new deployment.
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
     run([], configDir);
-    const v1Entry = join(configDir, "plugin", "opencode-auto-compact.ts");
-    assert.ok(existsSync(v1Entry));
+    const after = files.map((file) => statSync(file).mtimeMs);
+    assert.deepEqual(after, before, "a repeated install must keep file timestamps");
+    for (const file of files) assert.ok(existsSync(file), `missing ${file}`);
   } finally {
     rmSync(configDir, { recursive: true, force: true });
   }
@@ -95,16 +110,20 @@ test("install.sh repairs a stale library dir that is not world-traversable", () 
   }
 });
 
-test("install.sh removes the legacy library dir from the scanned plugin/ path", () => {
+test("install.sh removes every legacy scanned path", () => {
   const configDir = sandbox();
   try {
-    const legacyLib = join(configDir, "plugin", "opencode-auto-compact");
-    mkdirSync(legacyLib, { recursive: true });
+    const legacyPaths = [
+      join(configDir, "plugin", "opencode-auto-compact"),
+      join(configDir, "plugin", "opencode-auto-compact-lib"),
+      join(configDir, "plugins", "opencode-auto-compact"),
+    ];
+    for (const path of legacyPaths) mkdirSync(path, { recursive: true });
 
     run([], configDir);
 
-    // While this directory exists, opencode2 loads it as an extra plugin entry.
-    assert.equal(existsSync(legacyLib), false);
+    // While these directories exist, opencode2 loads them as extra plugins.
+    for (const path of legacyPaths) assert.equal(existsSync(path), false, `not removed: ${path}`);
     assert.ok(existsSync(join(configDir, "plugin", "opencode-auto-compact.ts")));
   } finally {
     rmSync(configDir, { recursive: true, force: true });

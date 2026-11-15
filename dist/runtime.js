@@ -113,7 +113,9 @@ export function createRuntime(deps) {
         catch (error) {
             // WARN (downgraded from error): the sweep is best-effort; live idle
             // events still drive compaction.
-            deps.logger.log("warn", "startup idle sweep failed", { error: describeError(error) });
+            deps.logger.log("warn", "startup idle sweep deferred: host session listing unavailable", {
+                error: describeError(error),
+            });
         }
     }
     function start() {

@@ -12,6 +12,6 @@
 // `server`, so this entry re-exports it unchanged instead of wrapping it in a
 // function. A function default export fails the v2 contract with
 // `SchemaError(Expected object at ["default"])`.
-import hybrid from "../opencode-auto-compact-lib/index.js";
+import hybrid from "../opencode-auto-compact-lib/index.mjs";
 
 export default hybrid;

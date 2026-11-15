@@ -78,10 +78,12 @@ export function createV1Hooks(input) {
     if (!activation)
         return {};
     const directory = input?.directory ?? input?.worktree;
+    const logger = createLogger(client);
     const runtime = createRuntime({
         ops: buildOps(client, directory),
-        logger: createLogger(client),
+        logger,
     });
+    logger.log("info", "auto-compact runtime activated", { entry: "v1" });
     runtime.start();
     return {
         async event({ event }) {

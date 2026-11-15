@@ -15,6 +15,6 @@
 //
 // Keep this banner verbatim: install.sh copies this file into the host config,
 // so changes here are visible after a pull-triggered install.
-import hybrid from "../opencode-auto-compact-lib/index.js";
+import hybrid from "../opencode-auto-compact-lib/index.mjs";
 
 export default hybrid;

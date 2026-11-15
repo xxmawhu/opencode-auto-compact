@@ -41,6 +41,8 @@ OPENCODE_CONFIG_DIR=/path/to/opencode bash install.sh
 
 安装后重启 OpenCode，插件在启动时加载。
 
+安装布局固定：两个入口文件位于 `plugin/` 与 `plugins/`，共享实现位于 OpenCode 扫描目录之外的 `opencode-auto-compact-lib/`。启动日志不会出现 `failed to load plugin` 告警；两个入口在同一进程只生效一次，不会重复触发压缩。
+
 ## 更新与卸载
 
 ```sh
@@ -58,8 +60,9 @@ bash install.sh --uninstall
 
 1. 重启 OpenCode。
 2. 打开 `opencode debug info`，`plugins:` 列表中出现 `opencode-auto-compact` 的两个入口文件。
-3. 让任一长会话的上下文超过 200000 token，结束当前回合。
-4. 会话空闲后自动压缩，无需手动操作。
+3. 启动日志中 `failed to load plugin` 为 0，两个入口只产生一次压缩。
+4. 让任一长会话的上下文超过 200000 token，结束当前回合。
+5. 会话空闲后自动压缩，无需手动操作。
 
 ## 兼容性
 

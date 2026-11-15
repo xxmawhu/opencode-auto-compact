@@ -162,7 +162,12 @@ export function setupV2(ctx: V2Context | undefined): Promise<() => void> {
   const session = ctx?.client?.session ?? ctx?.session;
   const logger = createLogger(ctx?.client?.app ?? ctx?.app);
   if (!session) {
-    logger.log("error", "v2 context has no session namespace");
+    // INFO: design-internal degradation. A host without a session namespace
+    // simply runs without auto compaction; this is not an operational fault.
+    logger.log(
+      "info",
+      "no session namespace in the plugin context; auto compaction stays inactive",
+    );
     return Promise.resolve(() => {});
   }
 
@@ -170,6 +175,7 @@ export function setupV2(ctx: V2Context | undefined): Promise<() => void> {
   const activation = claimActivation();
   if (!activation) return Promise.resolve(() => {});
 
+  logger.log("info", "auto-compact runtime activated", { entry: "v2" });
   const runtime = createRuntime({ ops: buildOps(session, ctx?.directory), logger });
   const controller = new AbortController();
 
@@ -195,9 +201,10 @@ export function setupV2(ctx: V2Context | undefined): Promise<() => void> {
       })();
     }
   } else {
-    // WARN (downgraded from error): the plugin cannot observe idle transitions
-    // on this host build, so it does nothing instead of failing the session.
-    logger.log("warn", "v2 context has no event.subscribe(); auto compaction is inactive");
+    // INFO: design-internal degradation. This host build exposes no
+    // event.subscribe, so the plugin cannot observe idle transitions and does
+    // nothing instead of interrupting the session.
+    logger.log("info", "event.subscribe is unavailable; auto compaction stays inactive");
   }
 
   runtime.start();

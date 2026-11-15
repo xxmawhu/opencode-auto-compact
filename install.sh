@@ -4,6 +4,17 @@
 # The installer only copies the prebuilt plugin files: no build, no package
 # installation and no edit of opencode.json.
 #
+# OpenCode plugin install contract v1 (summary, see README "安装布局与验收"):
+#   - the shared library lives outside the scanned `plugin/` and `plugins/`
+#     dirs, at <config>/opencode-auto-compact-lib/, so only entry files are
+#     discovered by the host;
+#   - the two entries activate the runtime exactly once per process
+#     (globalThis claim in the library);
+#   - acceptance: v1 and v2 startup logs contain zero
+#     "failed to load plugin" lines over >=3 rounds each.
+# Runtime logs are emitted through the host log service
+# `opencode-auto-compact`; this installer logs to ./log/install.YYYYMMDD.log.
+#
 # Usage:
 #   bash install.sh                 install or update the plugin
 #   bash install.sh --uninstall     remove the installed plugin files
@@ -20,9 +31,12 @@ V2_DIR="${CONFIG_DIR}/plugins"
 # library outside both directories makes the load count equal the entry count
 # without relying on the host's undocumented `id` de-duplication.
 LIB_DIR="${CONFIG_DIR}/${PLUGIN_NAME}-lib"
-# Pre-migration location: the library used to live inside the scanned `plugin/`
-# directory and was loaded by opencode2 as an extra plugin. Removed on install.
-LEGACY_LIB_DIR="${V1_DIR}/${PLUGIN_NAME}"
+# Pre-migration locations removed on install:
+#   - plugin/<name>/       library inside the scanned v1 dir (loaded as a plugin)
+#   - plugin/<name>-lib/   contract-named library inside the scanned v1 dir
+#   - plugins/<name>/      old v2 package directory (loaded as a plugin)
+LEGACY_PATHS=("${V1_DIR}/${PLUGIN_NAME}" "${V1_DIR}/${PLUGIN_NAME}-lib" "${V2_DIR}/${PLUGIN_NAME}")
+LEGACY_PARENTS=("${V1_DIR}" "${V1_DIR}" "${V2_DIR}")
 V1_ENTRY="${V1_DIR}/${PLUGIN_NAME}.ts"
 V2_ENTRY="${V2_DIR}/${PLUGIN_NAME}.ts"
 V1_SOURCE="${SCRIPT_DIR}/install/${PLUGIN_NAME}.ts"
@@ -30,7 +44,8 @@ V2_SOURCE="${SCRIPT_DIR}/install/${PLUGIN_NAME}-v2.ts"
 DIST_DIR="${SCRIPT_DIR}/dist"
 LOG_DIR="${SCRIPT_DIR}/log"
 LOG_FILE="${LOG_DIR}/install.$(date +%Y%m%d).log"
-readonly PLUGIN_NAME SCRIPT_DIR CONFIG_DIR V1_DIR V2_DIR LIB_DIR LEGACY_LIB_DIR V1_ENTRY V2_ENTRY
+readonly PLUGIN_NAME SCRIPT_DIR CONFIG_DIR V1_DIR V2_DIR LIB_DIR
+readonly LEGACY_PATHS LEGACY_PARENTS V1_ENTRY V2_ENTRY
 readonly V1_SOURCE V2_SOURCE DIST_DIR LOG_DIR LOG_FILE
 
 mkdir -p -- "${LOG_DIR}"
@@ -75,6 +90,15 @@ write_entry() {
   local source="$1"
   local target="$2"
   local tmp
+  if [[ -f "${target}" ]] && cmp -s -- "${source}" "${target}"; then
+    # Contract R6: unchanged content keeps its timestamp so a repeated install
+    # does not look like a new deployment to the host's file watcher.
+    if [[ "$(stat -c '%a' -- "${target}")" != "644" ]]; then
+      chmod 0644 -- "${target}"
+    fi
+    log info "unchanged ${target}"
+    return
+  fi
   tmp="$(mktemp "${target}.XXXXXX")"
   if ! install -m 0644 -- "${source}" "${tmp}"; then
     rm -f -- "${tmp}"
@@ -84,6 +108,46 @@ write_entry() {
     rm -f -- "${tmp}"
     die "failed to install ${target}"
   fi
+  log info "installed ${target}"
+}
+
+# True when the installed library already matches the staged content and mode,
+# so the swap can be skipped without touching mtimes (contract R6).
+lib_is_current() {
+  local staged="$1"
+  [[ -d "${LIB_DIR}" ]] || return 1
+  # Accept inherited setgid (2755) as long as other users can traverse and read;
+  # verify_installed_permissions enforces the same bits.
+  local dir_mode
+  dir_mode="$(stat -c '%a' -- "${LIB_DIR}")"
+  (( (8#${dir_mode} & 8#005) == 8#005 )) || return 1
+  local expected actual
+  expected="$(cd -- "${staged}" && printf '%s\n' * | sort)"
+  actual="$(cd -- "${LIB_DIR}" && printf '%s\n' * | sort)"
+  [[ "${expected}" == "${actual}" ]] || return 1
+  local name file_mode
+  while IFS= read -r name; do
+    [[ -f "${staged}/${name}" && -f "${LIB_DIR}/${name}" ]] || return 1
+    cmp -s -- "${staged}/${name}" "${LIB_DIR}/${name}" || return 1
+    file_mode="$(stat -c '%a' -- "${LIB_DIR}/${name}")"
+    (( (8#${file_mode} & 8#004) == 8#004 )) || return 1
+  done <<<"${expected}"
+  return 0
+}
+
+# Remove every pre-migration path. Each name must be a direct child of a
+# scanned directory; the guards fail closed on anything else.
+cleanup_legacy_paths() {
+  local index path parent
+  for index in "${!LEGACY_PATHS[@]}"; do
+    path="${LEGACY_PATHS[index]}"
+    parent="${LEGACY_PARENTS[index]}"
+    assert_safe_path "${path}" "${parent}"
+    if [[ -e "${path}" || -L "${path}" ]]; then
+      rm -rf -- "${path}"
+      log info "removed legacy path ${path}"
+    fi
+  done
 }
 
 # The host imports the entry from its own process account, which is not
@@ -93,7 +157,7 @@ write_entry() {
 # leaving a broken install behind.
 verify_installed_permissions() {
   local path mode
-  for path in "${LIB_DIR}" "${LIB_DIR}"/*.js "${LIB_DIR}/package.json" "${V1_ENTRY}" "${V2_ENTRY}"; do
+  for path in "${LIB_DIR}" "${LIB_DIR}"/*.js "${LIB_DIR}/index.mjs" "${LIB_DIR}/package.json" "${V1_ENTRY}" "${V2_ENTRY}"; do
     [[ -e "${path}" ]] || die "missing installed path: ${path}"
     mode="$(stat -c '%a' -- "${path}")"
     if [[ -d "${path}" ]]; then
@@ -118,7 +182,6 @@ install_plugin() {
   fi
 
   assert_safe_path "${LIB_DIR}" "${CONFIG_DIR}"
-  assert_safe_path "${LEGACY_LIB_DIR}" "${V1_DIR}"
   assert_safe_path "${V1_ENTRY}" "${V1_DIR}"
   assert_safe_path "${V2_ENTRY}" "${V2_DIR}"
 
@@ -140,33 +203,42 @@ install_plugin() {
   "type": "module"
 }
 EOF
-  chmod 0644 -- "${staging}/package.json"
+  # Contract R2 names the import target index.mjs. The built modules stay .js;
+  # this one-line ESM re-export keeps the documented entry path stable.
+  cat >"${staging}/index.mjs" <<'EOF'
+export { default } from "./index.js";
+export * from "./index.js";
+EOF
+  chmod 0644 -- "${staging}/package.json" "${staging}/index.mjs"
 
-  # Swap the module directory through a backup rename: the host never sees a
-  # half copied library, and a failed activation restores the previous one.
-  if [[ -e "${LIB_DIR}" ]]; then
-    mv -- "${LIB_DIR}" "${backup}"
-  fi
-  if ! mv -- "${staging}" "${LIB_DIR}"; then
-    if [[ -e "${backup}" ]]; then
-      mv -- "${backup}" "${LIB_DIR}"
+  if lib_is_current "${staging}"; then
+    rm -rf -- "${staging}"
+    log info "library unchanged (${LIB_DIR}/)"
+  else
+    # Swap the module directory through a backup rename: the host never sees a
+    # half copied library, and a failed activation restores the previous one.
+    if [[ -e "${LIB_DIR}" ]]; then
+      mv -- "${LIB_DIR}" "${backup}"
     fi
-    die "failed to activate ${LIB_DIR}"
+    if ! mv -- "${staging}" "${LIB_DIR}"; then
+      if [[ -e "${backup}" ]]; then
+        mv -- "${backup}" "${LIB_DIR}"
+      fi
+      die "failed to activate ${LIB_DIR}"
+    fi
+    rm -rf -- "${backup}"
+    chmod 0755 -- "${LIB_DIR}"
+    log info "installed ${LIB_DIR}/"
   fi
-  rm -rf -- "${backup}"
-  chmod 0755 -- "${LIB_DIR}"
   trap - EXIT
 
   write_entry "${V1_SOURCE}" "${V1_ENTRY}"
   write_entry "${V2_SOURCE}" "${V2_ENTRY}"
 
-  # Drop the pre-migration library directory: while it exists, opencode2 keeps
-  # loading it as a third plugin entry. Removal happens after the new entries
-  # are in place so a failure leaves a loadable plugin, not a dangling import.
-  if [[ -e "${LEGACY_LIB_DIR}" ]]; then
-    rm -rf -- "${LEGACY_LIB_DIR}"
-    log info "removed legacy library directory ${LEGACY_LIB_DIR}/"
-  fi
+  # Drop pre-migration directories: while they exist, the host keeps loading
+  # them as extra plugin entries. Removal happens after the new entries are in
+  # place so a failure leaves a loadable plugin, not a dangling import.
+  cleanup_legacy_paths
 
   verify_installed_permissions
 
@@ -176,9 +248,7 @@ EOF
     [[ -e "${module}" ]] && module_count=$((module_count + 1))
   done
 
-  log info "installed ${V1_ENTRY}"
-  log info "installed ${V2_ENTRY}"
-  log info "installed ${LIB_DIR}/ (${module_count} modules)"
+  log info "library has ${module_count} modules"
   warn_duplicate_registration
   log info "restart OpenCode to load the plugin"
 }
@@ -210,12 +280,12 @@ contains_plugin_name() {
 
 uninstall_plugin() {
   assert_safe_path "${LIB_DIR}" "${CONFIG_DIR}"
-  assert_safe_path "${LEGACY_LIB_DIR}" "${V1_DIR}"
   assert_safe_path "${V1_ENTRY}" "${V1_DIR}"
   assert_safe_path "${V2_ENTRY}" "${V2_DIR}"
 
-  rm -rf -- "${LIB_DIR}" "${LEGACY_LIB_DIR}"
+  rm -rf -- "${LIB_DIR}"
   rm -f -- "${V1_ENTRY}" "${V2_ENTRY}"
+  cleanup_legacy_paths
 
   log info "removed ${V1_ENTRY}"
   log info "removed ${V2_ENTRY}"

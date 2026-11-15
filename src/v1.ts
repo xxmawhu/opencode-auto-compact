@@ -116,10 +116,12 @@ export function createV1Hooks(input: V1PluginInput | undefined): PluginHooks {
   if (!activation) return {} as PluginHooks;
 
   const directory = input?.directory ?? input?.worktree;
+  const logger = createLogger(client);
   const runtime = createRuntime({
     ops: buildOps(client, directory),
-    logger: createLogger(client),
+    logger,
   });
+  logger.log("info", "auto-compact runtime activated", { entry: "v1" });
   runtime.start();
 
   return {

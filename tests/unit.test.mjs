@@ -234,3 +234,48 @@ test("v2 setup resolves to a cleanup function", async () => {
   assert.equal(typeof cleanup, "function");
   cleanup();
 });
+
+function captureApp() {
+  const logs = [];
+  return {
+    app: {
+      async log(input) {
+        logs.push(input.body);
+        return true;
+      },
+    },
+    logs,
+  };
+}
+
+test("activation is logged exactly once per process across both entries", async () => {
+  const { app, logs } = captureApp();
+  const first = await hybrid.server({ client: { ...fakeClient(), app } });
+  // The second entry stays inert and must not log a second activation.
+  assert.deepEqual(await hybrid.server({ client: { ...fakeClient(), app } }), {});
+  const cleanup = await hybrid.setup({ session: fakeClient().session, app });
+  cleanup();
+
+  const activations = logs.filter((entry) => entry.message === "auto-compact runtime activated");
+  assert.equal(activations.length, 1);
+
+  await first.dispose();
+});
+
+test("v2 setup uses INFO for design-internal degradations", async () => {
+  const withoutSession = captureApp();
+  const cleanup = await hybrid.setup({ app: withoutSession.app });
+  cleanup();
+  assert.equal(withoutSession.logs.length, 1);
+  assert.equal(withoutSession.logs[0].level, "info");
+
+  const withoutSubscribe = captureApp();
+  const active = await hybrid.setup({
+    session: fakeClient().session,
+    app: withoutSubscribe.app,
+  });
+  active();
+  assert.ok(withoutSubscribe.logs.length >= 2);
+  for (const entry of withoutSubscribe.logs) assert.equal(entry.level, "info");
+  assert.match(withoutSubscribe.logs[0].message, /auto-compact runtime activated/);
+});
