@@ -4,14 +4,16 @@
 # The installer only copies the prebuilt plugin files: no build, no package
 # installation and no edit of opencode.json.
 #
-# OpenCode plugin install contract v1 (summary, see README "安装布局与验收"):
-#   - the shared library lives outside the scanned `plugin/` and `plugins/`
-#     dirs, at <config>/opencode-auto-compact-lib/, so only entry files are
-#     discovered by the host;
-#   - the two entries activate the runtime exactly once per process
-#     (globalThis claim in the library);
+# OpenCode plugin install contract (summary, see README "安装布局与验收"):
+#   - a single entry at <config>/plugin/opencode-auto-compact.ts: both host
+#     generations scan scattered files in `plugin/` and `plugins/`, so a second
+#     copy is loaded twice per host;
+#   - the shared library lives outside both scanned dirs, at
+#     <config>/opencode-auto-compact-lib/, so only the entry is discovered;
+#   - the runtime still claims activation once per process (globalThis guard),
+#     as a defense layer only;
 #   - acceptance: v1 and v2 startup logs contain zero
-#     "failed to load plugin" lines over >=3 rounds each.
+#     "failed to load plugin" lines and exactly one entry over >=3 rounds each.
 # Runtime logs are emitted through the host log service
 # `opencode-auto-compact`; this installer logs to ./log/install.YYYYMMDD.log.
 #
@@ -26,27 +28,33 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 CONFIG_DIR="${OPENCODE_CONFIG_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/opencode}"
 V1_DIR="${CONFIG_DIR}/plugin"
 V2_DIR="${CONFIG_DIR}/plugins"
-# The host scans `plugin/` (and opencode2 also `plugins/`) for plugin entries and
-# treats every first-level subdirectory as a plugin package. Keeping the shared
-# library outside both directories makes the load count equal the entry count
-# without relying on the host's undocumented `id` de-duplication.
+# Both host generations scan scattered entry files in `plugin/` and `plugins/`
+# and opencode2 also treats every first-level subdirectory as a plugin package.
+# One entry is therefore enough for both, and a copy in each directory would be
+# evaluated twice by the same host. The shared library stays outside both
+# directories so the load count equals the entry count.
 LIB_DIR="${CONFIG_DIR}/${PLUGIN_NAME}-lib"
 # Pre-migration locations removed on install:
 #   - plugin/<name>/       library inside the scanned v1 dir (loaded as a plugin)
 #   - plugin/<name>-lib/   contract-named library inside the scanned v1 dir
 #   - plugins/<name>/      old v2 package directory (loaded as a plugin)
-LEGACY_PATHS=("${V1_DIR}/${PLUGIN_NAME}" "${V1_DIR}/${PLUGIN_NAME}-lib" "${V2_DIR}/${PLUGIN_NAME}")
-LEGACY_PARENTS=("${V1_DIR}" "${V1_DIR}" "${V2_DIR}")
+#   - plugins/<name>.ts    duplicate entry, previously installed next to the
+#                          canonical plugin/ entry (loaded twice by both hosts)
+LEGACY_PATHS=(
+  "${V1_DIR}/${PLUGIN_NAME}"
+  "${V1_DIR}/${PLUGIN_NAME}-lib"
+  "${V2_DIR}/${PLUGIN_NAME}"
+  "${V2_DIR}/${PLUGIN_NAME}.ts"
+)
+LEGACY_PARENTS=("${V1_DIR}" "${V1_DIR}" "${V2_DIR}" "${V2_DIR}")
 V1_ENTRY="${V1_DIR}/${PLUGIN_NAME}.ts"
-V2_ENTRY="${V2_DIR}/${PLUGIN_NAME}.ts"
 V1_SOURCE="${SCRIPT_DIR}/install/${PLUGIN_NAME}.ts"
-V2_SOURCE="${SCRIPT_DIR}/install/${PLUGIN_NAME}-v2.ts"
 DIST_DIR="${SCRIPT_DIR}/dist"
 LOG_DIR="${SCRIPT_DIR}/log"
 LOG_FILE="${LOG_DIR}/install.$(date +%Y%m%d).log"
 readonly PLUGIN_NAME SCRIPT_DIR CONFIG_DIR V1_DIR V2_DIR LIB_DIR
-readonly LEGACY_PATHS LEGACY_PARENTS V1_ENTRY V2_ENTRY
-readonly V1_SOURCE V2_SOURCE DIST_DIR LOG_DIR LOG_FILE
+readonly LEGACY_PATHS LEGACY_PARENTS V1_ENTRY
+readonly V1_SOURCE DIST_DIR LOG_DIR LOG_FILE
 
 mkdir -p -- "${LOG_DIR}"
 
@@ -157,7 +165,7 @@ cleanup_legacy_paths() {
 # leaving a broken install behind.
 verify_installed_permissions() {
   local path mode
-  for path in "${LIB_DIR}" "${LIB_DIR}"/*.js "${LIB_DIR}/index.mjs" "${LIB_DIR}/package.json" "${V1_ENTRY}" "${V2_ENTRY}"; do
+  for path in "${LIB_DIR}" "${LIB_DIR}"/*.js "${LIB_DIR}/index.mjs" "${LIB_DIR}/package.json" "${V1_ENTRY}"; do
     [[ -e "${path}" ]] || die "missing installed path: ${path}"
     mode="$(stat -c '%a' -- "${path}")"
     if [[ -d "${path}" ]]; then
@@ -170,11 +178,22 @@ verify_installed_permissions() {
   done
 }
 
+# Both hosts load every scattered file named `<plugin-name>*` in the two scan
+# dirs. Exactly one entry may exist, otherwise the same host evaluates this
+# plugin two or more times. Fail closed so a broken layout never ships.
+verify_single_entry() {
+  local count=0 path
+  for path in "${V1_DIR}/${PLUGIN_NAME}"* "${V2_DIR}/${PLUGIN_NAME}"*; do
+    [[ -e "${path}" || -L "${path}" ]] || continue
+    count=$((count + 1))
+  done
+  (( count == 1 )) || die "expected exactly 1 plugin entry in scan dirs, found ${count}"
+}
+
 install_plugin() {
   [[ -f "${DIST_DIR}/index.js" ]] ||
     die "dist/index.js is missing. Build it first: npm ci && npm run build"
   [[ -f "${V1_SOURCE}" ]] || die "missing entry template: ${V1_SOURCE}"
-  [[ -f "${V2_SOURCE}" ]] || die "missing entry template: ${V2_SOURCE}"
 
   local mkdir_error
   if ! mkdir_error="$(mkdir -p -- "${V1_DIR}" "${V2_DIR}" 2>&1)"; then
@@ -183,7 +202,6 @@ install_plugin() {
 
   assert_safe_path "${LIB_DIR}" "${CONFIG_DIR}"
   assert_safe_path "${V1_ENTRY}" "${V1_DIR}"
-  assert_safe_path "${V2_ENTRY}" "${V2_DIR}"
 
   local staging backup
   staging="$(mktemp -d "${CONFIG_DIR}/.${PLUGIN_NAME}-lib.stage.XXXXXX")"
@@ -233,13 +251,14 @@ EOF
   trap - EXIT
 
   write_entry "${V1_SOURCE}" "${V1_ENTRY}"
-  write_entry "${V2_SOURCE}" "${V2_ENTRY}"
 
-  # Drop pre-migration directories: while they exist, the host keeps loading
-  # them as extra plugin entries. Removal happens after the new entries are in
-  # place so a failure leaves a loadable plugin, not a dangling import.
+  # Drop pre-migration paths: directories are loaded as extra plugins and the
+  # old `plugins/<name>.ts` duplicate is evaluated a second time by both hosts.
+  # Removal happens after the canonical entry is in place so a failure leaves a
+  # loadable plugin, not a dangling import.
   cleanup_legacy_paths
 
+  verify_single_entry
   verify_installed_permissions
 
   local module_count=0
@@ -281,14 +300,12 @@ contains_plugin_name() {
 uninstall_plugin() {
   assert_safe_path "${LIB_DIR}" "${CONFIG_DIR}"
   assert_safe_path "${V1_ENTRY}" "${V1_DIR}"
-  assert_safe_path "${V2_ENTRY}" "${V2_DIR}"
 
   rm -rf -- "${LIB_DIR}"
-  rm -f -- "${V1_ENTRY}" "${V2_ENTRY}"
+  rm -f -- "${V1_ENTRY}"
   cleanup_legacy_paths
 
   log info "removed ${V1_ENTRY}"
-  log info "removed ${V2_ENTRY}"
   log info "removed ${LIB_DIR}/"
   log info "restart OpenCode to unload the plugin"
 }

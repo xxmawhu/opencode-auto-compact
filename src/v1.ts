@@ -110,8 +110,8 @@ export function createV1Hooks(input: V1PluginInput | undefined): PluginHooks {
   const client = input?.client;
   if (!client?.session) return {} as PluginHooks;
 
-  // A host that scans both plugin directories loads this library twice; only
-  // the first activation may own the runtime.
+  // Defense layer: a duplicate entry would activate this runtime twice; only
+  // the first activation may own it.
   const activation = claimActivation();
   if (!activation) return {} as PluginHooks;
 

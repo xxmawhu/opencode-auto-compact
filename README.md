@@ -41,7 +41,7 @@ OPENCODE_CONFIG_DIR=/path/to/opencode bash install.sh
 
 安装后重启 OpenCode，插件在启动时加载。
 
-安装布局固定：两个入口文件位于 `plugin/` 与 `plugins/`，共享实现位于 OpenCode 扫描目录之外的 `opencode-auto-compact-lib/`。启动日志不会出现 `failed to load plugin` 告警；两个入口在同一进程只生效一次，不会重复触发压缩。
+安装布局固定：唯一入口 `plugin/opencode-auto-compact.ts`，共享实现位于 OpenCode 扫描目录之外的 `opencode-auto-compact-lib/`。启动日志不会出现 `failed to load plugin` 告警；插件在同一进程只生效一次，不会重复触发压缩。安装脚本会清理旧版本遗留的 `plugins/opencode-auto-compact.ts`，避免宿主重复加载。
 
 ## 更新与卸载
 
@@ -59,8 +59,8 @@ bash install.sh --uninstall
 ## 验证
 
 1. 重启 OpenCode。
-2. 打开 `opencode debug info`，`plugins:` 列表中出现 `opencode-auto-compact` 的两个入口文件。
-3. 启动日志中 `failed to load plugin` 为 0，两个入口只产生一次压缩。
+2. 打开 `opencode debug info`，`plugins:` 列表中 `opencode-auto-compact` 只出现一个入口文件。
+3. 启动日志中 `failed to load plugin` 为 0，插件只产生一次压缩。
 4. 让任一长会话的上下文超过 200000 token，结束当前回合。
 5. 会话空闲后自动压缩，无需手动操作。
 
@@ -68,4 +68,4 @@ bash install.sh --uninstall
 
 - OpenCode v1 与 v2 均可使用。
 - 运行时只依赖 OpenCode 自身接口，没有第三方运行时依赖。
-- 同时安装两个入口时插件只生效一次，不会重复触发压缩。
+- 单个入口同时服务 v1 与 v2，插件每进程只生效一次，不会重复触发压缩。
