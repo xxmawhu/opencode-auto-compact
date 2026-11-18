@@ -42,6 +42,14 @@ export interface V2Context {
     directory?: string;
 }
 /**
+ * Host event names the plugin observes.
+ *
+ * `session.idle` is kept for hosts that publish it; opencode 2.3.2 reports a
+ * finished turn through `session.execution.*` instead, and `session.status`
+ * carries the idle flag on hosts that only publish status transitions.
+ */
+export declare const SUBSCRIBED_TYPES: string[];
+/**
  * v2 server part. Subscribes to idle events and resolves to the cleanup
  * function expected by the v2 plugin contract.
  */

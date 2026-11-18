@@ -575,3 +575,46 @@ test("v2 setup uses INFO for design-internal degradations", async () => {
   for (const entry of withoutSubscribe.logs) assert.equal(entry.level, "info");
   assert.match(withoutSubscribe.logs[0].message, /auto-compact runtime activated/);
 });
+
+test("v2 setup survives a host that throws on subscribe", async () => {
+  const events = createEventStream();
+  const logs = [];
+  const base = v2Context({ tokens: 210_000, events, logs }).ctx;
+  const ctx = {
+    ...base,
+    event: {
+      subscribe() {
+        throw new Error("subscription rejected");
+      },
+    },
+  };
+
+  const cleanup = await hybrid.setup(ctx);
+  assert.equal(typeof cleanup, "function");
+  const failures = logs.filter((entry) => entry.level === "error");
+  assert.equal(failures.length, 1);
+  assert.match(failures[0].message, /subscribing to host events failed/);
+  cleanup();
+});
+
+test("v2 records received events and the skipped duplicate turn-end signal", async () => {
+  const events = createEventStream();
+  const logs = [];
+  const { ctx, contextCalls } = v2Context({ tokens: 210_000, events, logs });
+
+  const cleanup = await hybrid.setup(ctx);
+  events.push({ type: "session.execution.succeeded", data: { sessionID: "ses_v2" } });
+  events.push({ type: "session.execution.succeeded", data: { sessionID: "ses_v2" } });
+  await until(() => contextCalls.length === 1, "v2 snapshot read");
+  await until(
+    () => logs.some((entry) => entry.message === "turn-end signal suppressed"),
+    "duplicate suppression line",
+  );
+
+  const received = logs.filter((entry) => entry.message === "host event received");
+  assert.equal(received.length, 1, "identical consecutive events fold into one line");
+  assert.equal(received[0].extra.sessionID, "ses_v2");
+  const suppressed = logs.find((entry) => entry.message === "turn-end signal suppressed");
+  assert.equal(suppressed.extra.reason, "debounce");
+  cleanup();
+});

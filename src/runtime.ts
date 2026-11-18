@@ -56,6 +56,10 @@ interface SessionState {
   lastFailureAt: number;
 }
 
+/** Why a turn-end signal did not reach a token evaluation. */
+type SuppressionReason =
+  "debounce" | "in-flight" | "attempt-cooldown" | "success-cooldown" | "failure-cooldown";
+
 export interface RuntimeDeps {
   readonly ops: CompactOps;
   readonly logger: RuntimeLogger;
@@ -96,6 +100,14 @@ export function createRuntime(deps: RuntimeDeps): AutoCompactRuntime {
     return created;
   }
 
+  function noteSuppression(sessionID: string, reason: SuppressionReason): void {
+    // INFO: one line per skipped turn-end signal. opencode publishes more than
+    // one signal for a single finished turn, so this line is what separates
+    // "the gate dropped it" from "the event stream delivered nothing at all" —
+    // the distinction the first v2 regression left invisible.
+    deps.logger.log("info", "turn-end signal suppressed", { sessionID, reason });
+  }
+
   /**
    * Evaluate one idle session and compact it only when the fixed threshold is
    * exceeded. Returns the compacted flag for tests and the startup sweep.
@@ -105,13 +117,28 @@ export function createRuntime(deps: RuntimeDeps): AutoCompactRuntime {
     const state = stateOf(sessionID);
 
     // Every turn-end signal for the same turn describes one idle transition.
-    if (current - state.lastCheckAt < IDLE_DEBOUNCE_MS) return false;
+    if (current - state.lastCheckAt < IDLE_DEBOUNCE_MS) {
+      noteSuppression(sessionID, "debounce");
+      return false;
+    }
     state.lastCheckAt = current;
 
-    if (inFlight.has(sessionID)) return false;
-    if (current - state.lastAttemptAt < ATTEMPT_COOLDOWN_MS) return false;
-    if (current - state.lastSuccessAt < SUCCESS_COOLDOWN_MS) return false;
-    if (current - state.lastFailureAt < FAILURE_COOLDOWN_MS) return false;
+    if (inFlight.has(sessionID)) {
+      noteSuppression(sessionID, "in-flight");
+      return false;
+    }
+    if (current - state.lastAttemptAt < ATTEMPT_COOLDOWN_MS) {
+      noteSuppression(sessionID, "attempt-cooldown");
+      return false;
+    }
+    if (current - state.lastSuccessAt < SUCCESS_COOLDOWN_MS) {
+      noteSuppression(sessionID, "success-cooldown");
+      return false;
+    }
+    if (current - state.lastFailureAt < FAILURE_COOLDOWN_MS) {
+      noteSuppression(sessionID, "failure-cooldown");
+      return false;
+    }
 
     inFlight.add(sessionID);
     try {
