@@ -291,8 +291,10 @@ EOF
 # A host-native registration plus these local copies would load the plugin
 # twice. The plugin de-duplicates itself in-process, but the duplicate entry is
 # still worth flagging.
-# WARN (downgraded from error): a duplicate registration makes the host load
-# the plugin twice; the runtime de-duplicates itself, so this stays advisory.
+# [log-review] warn downgraded from error: (1) a leftover opencode.json entry is
+# an expected legacy state; (2) the runtime de-duplicates itself in-process, so
+# the host is not harmed and error would be misleading; (3) triggers only when a
+# config file still names the plugin, impact is one redundant load attempt.
 warn_duplicate_registration() {
   local config_file
   for config_file in "${CONFIG_DIR}/opencode.json" "${CONFIG_DIR}/opencode.jsonc"; do

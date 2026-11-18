@@ -55,18 +55,19 @@ export function createFileLogger(root: string = logRoot()): RuntimeLogger {
 
   return {
     log(level, message, extra): void {
-      const line = format(level, message, extra);
       try {
+        const line = format(level, message, extra);
         mkdirSync(root, { recursive: true, mode: 0o755 });
         rotate(file);
         appendFileSync(file, line, { mode: 0o644 });
         return;
       } catch {
-        // A read-only home must not break session handling; fall through.
+        // A read-only home or an unserialisable payload must not break session
+        // handling; fall through to stderr.
       }
 
       try {
-        process.stderr.write(`[${PLUGIN_ID}]${line}`);
+        process.stderr.write(`[${PLUGIN_ID}] ${level} ${message}\n`);
       } catch {
         // Logging must never affect session handling.
       }

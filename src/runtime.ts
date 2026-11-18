@@ -129,8 +129,11 @@ export function createRuntime(deps: RuntimeDeps): AutoCompactRuntime {
       }
 
       if (!snapshot.providerID || !snapshot.modelID) {
-        // WARN (downgraded from error): old host messages may omit model
-        // metadata; compaction waits for a later turn instead of failing hard.
+        // [log-review] warn downgraded from error: (1) older hosts may omit model
+        // metadata, an expected message shape; (2) the next idle turn retries, so
+        // nothing is lost and error would only add noise; (3) triggers when a
+        // session is over the fixed threshold and its latest message has no
+        // model, impact is one deferred compaction.
         deps.logger.log("warn", "session is over the compact threshold but the model is unknown", {
           sessionID,
           effectiveTokens: snapshot.effectiveTokens,
@@ -192,8 +195,11 @@ export function createRuntime(deps: RuntimeDeps): AutoCompactRuntime {
         }
       }
     } catch (error) {
-      // WARN (downgraded from error): the sweep is best-effort; live idle
-      // events still drive compaction.
+      // [log-review] warn downgraded from error: (1) a host without a session
+      // listing is a supported configuration; (2) the sweep is best-effort and
+      // live idle events still drive compaction, so error would be misleading;
+      // (3) triggers only on hosts whose listing call throws, impact is no
+      // startup sweep for already-idle sessions.
       deps.logger.log("warn", "startup idle sweep deferred: host session listing unavailable", {
         error: describeError(error),
       });
