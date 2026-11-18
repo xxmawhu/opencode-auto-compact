@@ -172,7 +172,7 @@ export function setupV2(ctx: V2Context | undefined): Promise<() => void> {
   const activation = claimActivation();
   if (!activation) return Promise.resolve(() => {});
 
-  logger.log("info", "auto-compact runtime activated", { entry: "v2" });
+  logger.log("info", "auto-compact runtime activated", { entry: "v2", pid: process.pid });
   const runtime = createRuntime({ ops: buildOps(session), logger });
   const controller = new AbortController();
 
@@ -189,7 +189,10 @@ export function setupV2(ctx: V2Context | undefined): Promise<() => void> {
   }
 
   if (stream) {
-    logger.log("info", "subscribed to host turn-end events", { types: SUBSCRIBED_TYPES.length });
+    logger.log("info", "subscribed to host turn-end events", {
+      types: SUBSCRIBED_TYPES.length,
+      pid: process.pid,
+    });
     void (async () => {
       // Consecutive identical events fold into the first line so a streaming
       // turn cannot flood the log, while any change of type, session or status
@@ -206,6 +209,7 @@ export function setupV2(ctx: V2Context | undefined): Promise<() => void> {
               type: event.type ?? null,
               sessionID: event.properties?.sessionID ?? null,
               status,
+              pid: process.pid,
             });
           }
           await runtime.onEvent(event);
