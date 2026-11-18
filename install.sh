@@ -14,8 +14,10 @@
 #     as a defense layer only;
 #   - acceptance: v1 and v2 startup logs contain zero
 #     "failed to load plugin" lines and exactly one entry over >=3 rounds each.
-# Runtime logs are emitted through the host log service
-# `opencode-auto-compact`; this installer logs to ./log/install.YYYYMMDD.log.
+# Runtime logs are written to
+#   ${XDG_STATE_HOME:-$HOME/.local/state}/opencode-auto-compact/auto-compact.log
+# when the host exposes no log service (opencode 2.x). This installer logs to
+# ./log/install.YYYYMMDD.log and falls back to stderr when that is unwritable.
 #
 # Usage:
 #   bash install.sh                 install or update the plugin
@@ -54,14 +56,28 @@ LOG_DIR="${SCRIPT_DIR}/log"
 LOG_FILE="${LOG_DIR}/install.$(date +%Y%m%d).log"
 readonly PLUGIN_NAME SCRIPT_DIR CONFIG_DIR V1_DIR V2_DIR LIB_DIR
 readonly LEGACY_PATHS LEGACY_PARENTS V1_ENTRY
-readonly V1_SOURCE DIST_DIR LOG_DIR LOG_FILE
+readonly V1_SOURCE DIST_DIR LOG_DIR
 
-mkdir -p -- "${LOG_DIR}"
+# Logging must never decide whether an install succeeds. The checkout can belong
+# to another account, so ./log/ may exist but stay unwritable; `tee -a` then
+# aborted the whole install with "Permission denied". When the log file cannot
+# be opened the line goes to stderr instead and the install continues.
+if ! mkdir -p -- "${LOG_DIR}" 2>/dev/null || [[ ! -w "${LOG_DIR}" ]]; then
+  LOG_FILE=""
+fi
 
 log() {
   local level="$1"
   shift
-  printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${level}" "$*" | tee -a "${LOG_FILE}"
+  local line
+  line="[$(date '+%Y-%m-%d %H:%M:%S')] [${level}] $*"
+  if [[ -n "${LOG_FILE}" ]] && printf '%s\n' "${line}" >>"${LOG_FILE}" 2>/dev/null; then
+    printf '%s\n' "${line}"
+    return
+  fi
+  # Drop the unusable log target so every later line takes the stderr path.
+  LOG_FILE=""
+  printf '%s\n' "${line}" >&2
 }
 
 die() {

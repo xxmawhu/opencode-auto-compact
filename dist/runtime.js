@@ -1,4 +1,20 @@
 import { ATTEMPT_COOLDOWN_MS, COMPACT_THRESHOLD_TOKENS, FAILURE_COOLDOWN_MS, IDLE_DEBOUNCE_MS, STARTUP_SWEEP_DELAY_MS, SUCCESS_COOLDOWN_MS, } from "./constants.js";
+/**
+ * Event types that mean "the turn finished, the session is no longer working".
+ *
+ * opencode 2.3.2 does not publish `session.idle` for a finished turn: a probe of
+ * a complete turn on the real host received `session.execution.started`,
+ * `session.step.ended` and `session.execution.succeeded`, and no idle event at
+ * all (2026-11-18, `.var` event probe). Subscribing to the idle names alone is
+ * therefore a permanent no-op on 2.x, so the execution terminal events are the
+ * idle signal there. The idle names stay in the set for hosts that do emit them.
+ */
+const TURN_FINISHED_TYPES = new Set([
+    "session.idle",
+    "session.execution.succeeded",
+    "session.execution.failed",
+    "session.execution.interrupted",
+]);
 function describeError(error) {
     return error instanceof Error ? error.message : String(error);
 }
@@ -27,7 +43,7 @@ export function createRuntime(deps) {
     async function evaluate(sessionID) {
         const current = now();
         const state = stateOf(sessionID);
-        // `session.idle` and `session.status(idle)` describe the same transition.
+        // Every turn-end signal for the same turn describes one idle transition.
         if (current - state.lastCheckAt < IDLE_DEBOUNCE_MS)
             return false;
         state.lastCheckAt = current;
@@ -42,6 +58,14 @@ export function createRuntime(deps) {
         inFlight.add(sessionID);
         try {
             const snapshot = await deps.ops.readSnapshot(sessionID);
+            // INFO: one line per idle evaluation. Without it the host log cannot
+            // distinguish "plugin inactive" from "session still under the fixed
+            // threshold", which is what made the first v2 regression invisible.
+            deps.logger.log("info", "idle session evaluated against the fixed threshold", {
+                sessionID,
+                effectiveTokens: snapshot?.effectiveTokens ?? null,
+                thresholdTokens: COMPACT_THRESHOLD_TOKENS,
+            });
             if (!snapshot || snapshot.effectiveTokens <= COMPACT_THRESHOLD_TOKENS) {
                 return false;
             }
@@ -85,7 +109,7 @@ export function createRuntime(deps) {
                     sessions.delete(deleted);
                 return;
             }
-            const isIdle = type === "session.idle" ||
+            const isIdle = (typeof type === "string" && TURN_FINISHED_TYPES.has(type)) ||
                 (type === "session.status" && event.properties?.status?.type === "idle");
             if (!isIdle)
                 return;

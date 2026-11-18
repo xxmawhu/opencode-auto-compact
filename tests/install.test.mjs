@@ -1,15 +1,17 @@
 import assert from "node:assert/strict";
 import {
   chmodSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -145,6 +147,43 @@ test("install.sh repairs a stale library dir that is not world-traversable", () 
     assert.equal(statSync(libDir).mode & 0o777, 0o755);
   } finally {
     rmSync(configDir, { recursive: true, force: true });
+  }
+});
+
+test("install.sh still installs when its own ./log/ is not writable", () => {
+  // A shared checkout can carry a ./log/ owned by another account. `tee -a`
+  // used to abort the whole install with EACCES there, so the line now falls
+  // back to stderr and the install completes.
+  const sandboxDir = sandbox();
+  const repo = join(sandboxDir, "repo");
+  const configDir = join(sandboxDir, "config", "opencode");
+  try {
+    cpSync(INSTALLER, join(repo, "install.sh"));
+    cpSync(join(ROOT, "install"), join(repo, "install"), { recursive: true });
+    cpSync(join(ROOT, "dist"), join(repo, "dist"), { recursive: true });
+    mkdirSync(join(repo, "log"), { recursive: true });
+    chmodSync(join(repo, "log"), 0o500);
+
+    const result = spawnSync("bash", [join(repo, "install.sh")], {
+      cwd: repo,
+      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir },
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, `install failed: ${result.stderr}`);
+    assert.ok(
+      existsSync(join(configDir, "plugin", "opencode-auto-compact.ts")),
+      "the entry must still be installed",
+    );
+    assert.match(result.stderr, /\[info\] installed .*opencode-auto-compact\.ts/);
+    assert.deepEqual(
+      readdirSync(join(repo, "log")),
+      [],
+      "an unwritable log dir must not receive a log file",
+    );
+  } finally {
+    chmodSync(join(repo, "log"), 0o700);
+    rmSync(sandboxDir, { recursive: true, force: true });
   }
 });
 

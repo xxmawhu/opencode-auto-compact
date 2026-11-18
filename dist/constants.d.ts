@@ -8,7 +8,7 @@ export declare const PLUGIN_ID = "opencode-auto-compact";
  * config file, so no caller can change when compaction happens.
  */
 export declare const COMPACT_THRESHOLD_TOKENS = 200000;
-/** Merge window for the two idle signals (`session.idle`, `session.status`). */
+/** Merge window for the turn-end signals that report the same idle transition. */
 export declare const IDLE_DEBOUNCE_MS = 2000;
 /** Minimum gap between two compaction attempts for the same session. */
 export declare const ATTEMPT_COOLDOWN_MS = 60000;

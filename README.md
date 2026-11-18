@@ -64,6 +64,18 @@ bash install.sh --uninstall
 4. 让任一长会话的上下文超过 200000 token，结束当前回合。
 5. 会话空闲后自动压缩，无需手动操作。
 
+## 运行记录
+
+插件把每次空闲评估与压缩结果写到自己的日志文件：
+
+```text
+${XDG_STATE_HOME:-~/.local/state}/opencode-auto-compact/auto-compact.log
+```
+
+每次评估一行，压缩成功一行，记录会话 ID、当时的 token 数与阈值。文件超过 2 MiB 时轮转为 `auto-compact.log.1`。
+
+日志里出现 `idle session evaluated against the fixed threshold` 表示插件已生效但上下文未达阈值；出现 `compacted an idle session over the fixed threshold` 表示已自动压缩。
+
 ## 兼容性
 
 - OpenCode v1 与 v2 均可使用。
