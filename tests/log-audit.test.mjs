@@ -452,6 +452,41 @@ test("run() counts errors in a log subdirectory", async () => {
   }
 });
 
+test("run() collapses one record written to two sinks", async () => {
+  const dirname = path.dirname(new URL(import.meta.url).pathname);
+  const root = fs.mkdtempSync(path.join(dirname, ".tmp-multisink-"));
+  const opts = {
+    roots: [path.join(root, "group", "proj")],
+    auditDir: path.join(root, "audit"),
+    issuesDir: path.join(root, "issues"),
+    logDir: path.join(root, "runlog"),
+    windowHours: 24,
+    writeIssueDigest: false,
+    now: new Date("2026-11-19T09:00:00Z"),
+  };
+  try {
+    const logDir = path.join(root, "group", "proj", "log");
+    await fs.promises.mkdir(logDir, { recursive: true });
+    // loguru writes the identical record to both sinks; counting each file
+    // would double every error and inflate "errors remaining".
+    const record = "2026-11-19T08:00:00Z | ERROR | daemon failed\n";
+    await fs.promises.writeFile(path.join(logDir, "error_2026-11-19.log"), record);
+    await fs.promises.writeFile(path.join(logDir, "task_2026-11-19.log"), record);
+    // A second, genuinely distinct event must still be counted.
+    await fs.promises.writeFile(
+      path.join(logDir, "task_2026-11-19.log"),
+      `${record}2026-11-19T08:05:00Z | ERROR | second failure\n`,
+    );
+
+    const result = await run(opts);
+    assert.equal(result.groups.length, 1);
+    assert.equal(result.groups[0].errors, 2);
+    assert.equal(result.scan.duplicateMatches, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("diffProjectCounts reports eliminated, new and changed projects", () => {
   const rows = diffProjectCounts(
     { "a/proj": 10, "b/proj": 3, "c/proj": 1 },

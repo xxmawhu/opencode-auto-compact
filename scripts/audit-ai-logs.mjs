@@ -680,6 +680,9 @@ function renderReport({
   lines.push(
     `- findings: error lines ${totalErrors}, warn lines ${totalWarns}, projects with errors ${groups.length}`,
   );
+  lines.push(
+    `- multi-sink duplicates collapsed: ${scan.duplicateMatches ?? 0} (same record written to more than one log file)`,
+  );
   lines.push("");
   lines.push(...renderCoverageGaps(scan.unreadableDirs));
   lines.push("## Projects with error lines");
@@ -780,6 +783,7 @@ export async function run(options = {}) {
     filesRead: 0,
     filesSkipped: 0,
     staleMatches: 0,
+    duplicateMatches: 0,
     skipped: {},
     // A log dir that cannot be listed is a blind spot for the whole project it
     // belongs to: silently `continue`-ing would let the report claim full
@@ -791,6 +795,9 @@ export async function run(options = {}) {
   };
   const groups = new Map(); // project -> aggregate
   const signatureStats = new Map(); // signature -> { count, project, samples }
+  // (project, timestamp+text) -> first file that carried the record, used to
+  // collapse multi-sink duplicates.
+  const recordFiles = new Map();
 
   const logDirs = cfg.roots.flatMap((root) =>
     discoverLogDirs(root, cfg.maxDepth, cfg.skipDirs, cfg.skipLogParents),
@@ -818,6 +825,20 @@ export async function run(options = {}) {
         };
         const sig = signatureOf(project, text);
         if (level === "error") {
+          // One loguru record can reach several sinks (e.g. `task_<day>.log`
+          // and `error_<day>.log`), which made the audit count the same event
+          // twice — get-task-from-notion reported 4 errors where only 2
+          // distinct records existed. Collapse a record seen in a *different*
+          // file of the same project; repeats inside one file are kept, since
+          // those are genuinely re-logged events.
+          const recordKey = `${parseLeadingTimestamp(text) ?? parseJsonTimestamp(text) ?? ""}\u0000${text.trim()}`;
+          const scopedKey = `${project}\u0000${recordKey}`;
+          const firstFile = recordFiles.get(scopedKey);
+          if (firstFile !== undefined && firstFile !== file) {
+            scan.duplicateMatches += 1;
+            return;
+          }
+          recordFiles.set(scopedKey, file);
           group.errors += 1;
           group.files.add(file);
           group.signatures.set(sig, (group.signatures.get(sig) ?? 0) + 1);
@@ -985,7 +1006,7 @@ export async function run(options = {}) {
     );
   }
 
-  return { day, reportFile, stateFile, summary, groups: projectGroups, state };
+  return { day, reportFile, stateFile, summary, groups: projectGroups, state, scan };
 }
 
 // A project that reports errors but has no row in `audit/triage.md` is a gap:
