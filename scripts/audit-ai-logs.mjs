@@ -390,8 +390,8 @@ function writeFileAtomic(file, content) {
   fs.renameSync(tmp, file);
 }
 
-function appendRunLog(line) {
-  const file = path.join(PROJECT_ROOT, "log", `log-audit.${dayKey(new Date())}.log`);
+function appendRunLog(line, logDir = path.join(PROJECT_ROOT, "log"), at = new Date()) {
+  const file = path.join(logDir, `log-audit.${dayKey(at)}.log`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, `${line}\n`);
 }
@@ -622,9 +622,15 @@ function renderReport({
 
 export async function run(options = {}) {
   const cfg = { ...DEFAULTS, ...options };
-  const now = new Date();
+  // Injectable clock and output roots so the whole pipeline can be exercised
+  // against fixtures in tests/.tmp-*/: the production defaults are unchanged,
+  // and the tests prove classification, the day counter and the persistence
+  // table without waiting a day for a real cron run.
+  const now = options.now instanceof Date ? options.now : new Date();
   const day = dayKey(now);
-  const auditDir = path.join(PROJECT_ROOT, "audit");
+  const auditDir = options.auditDir ?? path.join(PROJECT_ROOT, "audit");
+  const issuesDir = options.issuesDir ?? path.join(PROJECT_ROOT, "issues");
+  const logDir = options.logDir ?? path.join(PROJECT_ROOT, "log");
   const stateFile = path.join(auditDir, "state.json");
   const reportFile = path.join(auditDir, "reports", `log-audit.${day}.md`);
   const historyFile = path.join(auditDir, "findings.jsonl");
@@ -816,13 +822,13 @@ export async function run(options = {}) {
   }
 
   const summary = `day=${day} monitored_days=${Object.keys(state.days).length} log_dirs=${scan.logDirs} unreadable_dirs=${scan.unreadableDirs.length} files_read=${scan.filesRead} error_lines=${projectGroups.reduce((s, g) => s + g.errors, 0)} projects_with_errors=${projectGroups.length}`;
-  appendRunLog(`${now.toISOString()} ${summary}`);
+  appendRunLog(`${now.toISOString()} ${summary}`, logDir, now);
 
   // Feedback loop: a daily digest in `issues/` is picked up by the project
   // monitor and turned into a triage task. Without it the cron scan would
   // collect reports nobody reviews, and errors would never be eliminated.
   if (cfg.writeIssueDigest && projectGroups.length > 0) {
-    const digestFile = path.join(PROJECT_ROOT, "issues", `log-audit-${day}.md`);
+    const digestFile = path.join(issuesDir, `log-audit-${day}.md`);
     let triageText = "";
     try {
       triageText = fs.readFileSync(path.join(auditDir, "triage.md"), "utf8");
@@ -839,6 +845,8 @@ export async function run(options = {}) {
     );
     appendRunLog(
       `${now.toISOString()} digest=${digestFile} untriaged=${untriaged.length}${untriaged.length > 0 ? ` [${untriaged.join("; ")}]` : ""}`,
+      logDir,
+      now,
     );
   }
 

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
@@ -21,6 +20,7 @@ import {
   summarizePersistentSignatures,
   renderPersistentSignatures,
   mergeSignatureDays,
+  run,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -217,8 +217,15 @@ test("parseLeadingTimestamp returns null for continuation lines", () => {
   assert.equal(parseLeadingTimestamp(""), null);
 });
 
+// Fixtures must live inside the project (tests/.tmp-*): writing them to the
+// system temp dir is forbidden, and a rejected fixture leaves no trace behind.
+function makeFixtureDir(prefix) {
+  const dirname = import.meta.dirname ?? process.cwd();
+  return fs.mkdtempSync(path.join(dirname, `.tmp-${prefix}-`));
+}
+
 test("discoverLogDirs reaches depth-6 project logs", async () => {
-  const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "log-audit-depth-"));
+  const tmp = makeFixtureDir("audit-depth");
   try {
     const deep = path.join(tmp, "group", "repo", "proj", "proj2");
     await fs.promises.mkdir(path.join(deep, "log"), { recursive: true });
@@ -232,7 +239,7 @@ test("discoverLogDirs reaches depth-6 project logs", async () => {
 });
 
 test("discoverLogDirs skips .local homes and scripts/log", async () => {
-  const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "log-audit-skip-"));
+  const tmp = makeFixtureDir("audit-skip");
   try {
     const skipDirs = new Set([".local", ".git"]);
     const skipLogParents = new Set(["scripts"]);
@@ -347,4 +354,71 @@ test("mergeSignatureDays accumulates distinct days and survives gaps", () => {
     "20261118",
     "20261119",
   ]);
+});
+
+// End-to-end: the daily report is the evidence for both "errors are gone" and
+// "days monitored", so the whole pipeline runs twice on fixtures — one day
+test("run() two consecutive days: counts, day counter and persistence table", async () => {
+  const dirname = import.meta.dirname ?? process.cwd();
+  const root = fs.mkdtempSync(path.join(dirname, ".tmp-audit-e2e-"));
+  const dayA = new Date(2026, 10, 19, 10, 0, 0);
+  const dayB = new Date(2026, 10, 20, 10, 0, 0);
+  const two = (n) => String(n).padStart(2, "0");
+  const stamp = (d) =>
+    `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())} ${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}.000 +00:00`;
+  const projectLog = path.join(root, "proj", "log");
+  const opts = {
+    roots: [root],
+    auditDir: path.join(root, "audit"),
+    issuesDir: path.join(root, "issues"),
+    logDir: path.join(root, "log"),
+  };
+  const writeDay = (when) => {
+    const file = path.join(projectLog, "app.log");
+    fs.mkdirSync(projectLog, { recursive: true });
+    fs.writeFileSync(
+      file,
+      [
+        `${stamp(when)} | ERROR    | mod:fn:1 - boom one`,
+        `${stamp(when)} | INFO     | mod:fn:2 - steady`,
+        "[PASS] all checks good, errors=0",
+        `${stamp(new Date(2026, 9, 1, 10, 0, 0))} | ERROR    | mod:fn:3 - long gone`,
+        "",
+      ].join("\n"),
+    );
+    fs.utimesSync(file, when, when);
+  };
+  try {
+    writeDay(dayA);
+    const first = await run({ ...opts, now: dayA });
+    assert.equal(first.groups.length, 1);
+    assert.equal(first.groups[0].errors, 1, "only the in-window ERROR line counts");
+    const reportA = fs.readFileSync(first.reportFile, "utf8");
+    assert.match(reportA, /monitoring progress: 1\/30/);
+    assert.match(reportA, /findings: error lines 1/);
+    assert.equal(
+      reportA.includes("## Not yet eliminated"),
+      false,
+      "one day cannot show persistence",
+    );
+    assert.equal(
+      fs.existsSync(path.join(opts.issuesDir, `log-audit-${first.day}.md`)),
+      true,
+      `digest for ${first.day} expected in ${opts.issuesDir}`,
+    );
+
+    writeDay(dayB);
+    const second = await run({ ...opts, now: dayB });
+    assert.equal(second.groups[0].errors, 1);
+    const reportB = fs.readFileSync(second.reportFile, "utf8");
+    assert.match(reportB, /monitoring progress: 2\/30/);
+    assert.match(reportB, /## Change vs 20261119/);
+    assert.match(reportB, /## Not yet eliminated/);
+    assert.match(reportB, /boom one/);
+    const sig = Object.values(second.state.signatures).find((s) => s.days?.length === 2);
+    assert.ok(sig, "signature seen on both days records both days");
+    assert.deepEqual(sig.days, ["20261119", "20261120"]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
