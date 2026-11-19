@@ -101,6 +101,28 @@ test("classifyLine drops pass verdicts and zero counters", () => {
   );
 });
 
+test("classifyLine does not count mentions of the level in outcome metadata", () => {
+  // Each sample is a real line from this project's own logs (2026-11-19): the
+  // verify scripts describe what they searched for, so the word ERROR there is
+  // a noun, not a level. Counting it made the audit blame itself for the fixes
+  // it verified.
+  const metadata = [
+    "target_head: 19beb97 fix(scan): 已知损坏基线消噪，命中只计数 + 新增逐条 ERROR（issue 8b932531）",
+    "reason: 今日仍有 ERROR 命中（5xx=0, list_comments:569=1）",
+    "reason: 修复后 16 个周期无新增 ERROR 且无人工步骤",
+    "[2026-11-19T11:55:40Z] verdict=PASS zero new ERROR across cycles 11:45/11:50/11:55",
+    // A systemd unit directive, not an exception class.
+    "StandardError=append:/mnt/beegfs_data/usr/maxx/dev/live-ops/backup-shm-data/backup-shm-data/log/back-shm-data.log",
+  ];
+  for (const line of metadata) assert.equal(classifyLine(line), null, `expected noise: ${line}`);
+  // The same words in a real failure still count.
+  assert.equal(
+    classifyLine("2026-11-19T08:45:32Z [ERROR] order_collector.hpp:222 GET /orders failed"),
+    "error",
+  );
+  assert.equal(classifyLine("ERROR: pre-commit not found in PATH"), "error");
+});
+
 test("classifyLine judges structured records by declared level/status", () => {
   const pass = JSON.stringify({ status: "PASS", checks: [{ expected: "日志含 ERROR 级别" }] });
   assert.equal(classifyLine(pass), null);

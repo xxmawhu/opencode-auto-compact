@@ -140,6 +140,17 @@ const NOISE_PATTERNS = [
   /\[PASS\]/,
   // Lint advice lines ("help: Replace ...").
   /^help:\s/,
+  // Verification scripts record their own outcome as `key: value` metadata, and
+  // the value may name the log level they searched for rather than report a
+  // failure. Real samples from this project's own logs:
+  //   target_head: 19beb97 fix(scan): ... 新增逐条 ERROR（issue 8b932531）
+  //   reason: 今日仍有 ERROR 命中（5xx=0, list_comments:569=1）
+  // Counting the mention made the audit blame itself for other projects' fixes.
+  /^\s*(?:\[[^\]]*\]\s*)?(target_head|reason)\s*:/,
+  /\bverdict\s*[:=]\s*(?:PASS|FAIL|INCONCLUSIVE)\b/i,
+  // systemd unit directives, not runtime exceptions:
+  //   StandardError=append:/.../log/back-shm-data.log
+  /^\s*Standard(?:Error|Output)\s*=/,
 ];
 
 export function isNoise(line) {
