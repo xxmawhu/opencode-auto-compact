@@ -1012,7 +1012,11 @@ export async function run(options = {}) {
   // Feedback loop: a daily digest in `issues/` is picked up by the project
   // monitor and turned into a triage task. Without it the cron scan would
   // collect reports nobody reviews, and errors would never be eliminated.
-  if (cfg.writeIssueDigest && projectGroups.length > 0) {
+  // Once the day's digest is archived the to-do is done, so a manual re-run
+  // must not recreate it (that would re-triage the same content and keep
+  // `issues/` from ever reaching zero).
+  const endTaskDir = options.endTaskDir ?? path.join(PROJECT_ROOT, "end_task");
+  if (cfg.writeIssueDigest && projectGroups.length > 0 && !isDigestArchived(endTaskDir, day)) {
     const digestFile = path.join(issuesDir, `log-audit-${day}.md`);
     let triageText = "";
     try {
@@ -1036,6 +1040,24 @@ export async function run(options = {}) {
   }
 
   return { day, reportFile, stateFile, summary, groups: projectGroups, state, scan };
+}
+
+// The digest is a to-do handed to the project monitor: it is written to
+// `issues/`, triaged into `audit/triage.md`, then archived under `end_task/`.
+// A manual re-run used to recreate the file, so the same digest got triaged
+// twice and `issues/` never stayed empty. Once the day's digest is archived,
+// later runs only refresh the report.
+export function isDigestArchived(endTaskDir, day, exists = (p) => fs.existsSync(p)) {
+  const name = `log-audit-${day}.md`;
+  let entries;
+  try {
+    entries = fs.readdirSync(endTaskDir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+  return entries.some(
+    (entry) => entry.isDirectory() && exists(path.join(endTaskDir, entry.name, name)),
+  );
 }
 
 // A project that reports errors but has no row in `audit/triage.md` is a gap:

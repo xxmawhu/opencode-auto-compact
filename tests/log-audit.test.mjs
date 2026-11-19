@@ -26,6 +26,7 @@ import {
   run,
   isVanishedDirError,
   displayProject,
+  isDigestArchived,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -622,6 +623,7 @@ test("run() two consecutive days: counts, day counter and persistence table", as
     auditDir: path.join(root, "audit"),
     issuesDir: path.join(root, "issues"),
     logDir: path.join(root, "log"),
+    endTaskDir: path.join(root, "end_task"),
   };
   const writeDay = (when) => {
     const file = path.join(projectLog, "app.log");
@@ -657,6 +659,20 @@ test("run() two consecutive days: counts, day counter and persistence table", as
       `digest for ${first.day} expected in ${opts.issuesDir}`,
     );
 
+    // Re-running the same day after the digest was triaged and archived must
+    // not put it back: the to-do is done, and recreating it would re-triage
+    // the same content while keeping `issues/` from reaching zero.
+    const digestFile = path.join(opts.issuesDir, `log-audit-${first.day}.md`);
+    const archiveDir = path.join(opts.endTaskDir, `${first.day}-log-audit-digest`);
+    fs.mkdirSync(archiveDir, { recursive: true });
+    fs.renameSync(digestFile, path.join(archiveDir, `log-audit-${first.day}.md`));
+    await run({ ...opts, now: dayA });
+    assert.equal(
+      fs.existsSync(digestFile),
+      false,
+      "an archived digest must not be recreated by a later run of the same day",
+    );
+
     writeDay(dayB);
     const second = await run({ ...opts, now: dayB });
     assert.equal(second.groups[0].errors, 1);
@@ -678,4 +694,30 @@ test("isVanishedDirError separates a removed dir from a protected one", () => {
   assert.equal(isVanishedDirError("EACCES"), false, "permission errors are real blind spots");
   assert.equal(isVanishedDirError("EPERM"), false);
   assert.equal(isVanishedDirError(undefined), false);
+});
+
+test("isDigestArchived only reports a digest once it sits in an archive folder", () => {
+  const root = fs.mkdtempSync(path.join("tests", ".tmp-digest-"));
+  try {
+    fs.mkdirSync(path.join(root, "20260101-other"));
+    fs.writeFileSync(path.join(root, "20260101-other", "something-else.md"), "");
+    fs.writeFileSync(path.join(root, "log-audit-20260101.md"), "loose file is not an archive");
+    assert.equal(isDigestArchived(root, "20260101"), false);
+    assert.equal(
+      isDigestArchived(root, "20260102"),
+      false,
+      "a missing archive folder means the digest was never triaged",
+    );
+
+    fs.mkdirSync(path.join(root, "20260102-log-audit-digest"));
+    fs.writeFileSync(path.join(root, "20260102-log-audit-digest", "log-audit-20260102.md"), "");
+    assert.equal(isDigestArchived(root, "20260102"), true);
+    assert.equal(
+      isDigestArchived(path.join(root, "no-such-dir"), "20260102"),
+      false,
+      "an unreadable archive root must not claim the digest is done",
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
