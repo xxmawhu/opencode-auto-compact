@@ -220,7 +220,7 @@ test("parseLeadingTimestamp returns null for continuation lines", () => {
 // Fixtures must live inside the project (tests/.tmp-*): writing them to the
 // system temp dir is forbidden, and a rejected fixture leaves no trace behind.
 function makeFixtureDir(prefix) {
-  const dirname = import.meta.dirname ?? process.cwd();
+  const dirname = path.dirname(new URL(import.meta.url).pathname);
   return fs.mkdtempSync(path.join(dirname, `.tmp-${prefix}-`));
 }
 
@@ -359,7 +359,7 @@ test("mergeSignatureDays accumulates distinct days and survives gaps", () => {
 // End-to-end: the daily report is the evidence for both "errors are gone" and
 // "days monitored", so the whole pipeline runs twice on fixtures — one day
 test("run() two consecutive days: counts, day counter and persistence table", async () => {
-  const dirname = import.meta.dirname ?? process.cwd();
+  const dirname = path.dirname(new URL(import.meta.url).pathname);
   const root = fs.mkdtempSync(path.join(dirname, ".tmp-audit-e2e-"));
   const dayA = new Date(2026, 10, 19, 10, 0, 0);
   const dayB = new Date(2026, 10, 20, 10, 0, 0);
