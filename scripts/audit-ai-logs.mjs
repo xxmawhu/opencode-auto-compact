@@ -446,6 +446,17 @@ export function renderPersistentSignatures(rows = [], display = (p) => p) {
   ];
 }
 
+// Days a signature has been seen, as a sorted set. A signature that reappears
+// after quiet days must keep the earlier days: seeding from `firstSeen` when an
+// older entry has no `days` field is what stops the count from restarting.
+export function mergeSignatureDays(prior, day) {
+  const days = new Set(
+    prior?.days ?? (prior?.firstSeen ? [dayKey(new Date(prior.firstSeen))] : []),
+  );
+  days.add(day);
+  return [...days].sort();
+}
+
 // "Eliminated" is a claim about persistence, not about one quiet day. A
 // signature seen on two or more distinct days has survived at least one
 // attempted fix window, so it is the set that must still be driven to zero.
@@ -713,15 +724,14 @@ export async function run(options = {}) {
     // Distinct days a signature appeared, not the calendar span since it was
     // first seen: an error that hit on day 1 and again on day 20 is not a
     // 20-day-old problem, and calling it one would overstate what is stuck.
-    const days = new Set(prior?.days ?? (prior ? [dayKey(new Date(prior.firstSeen))] : []));
-    days.add(day);
+    const days = mergeSignatureDays(prior, day);
     state.signatures = state.signatures ?? {};
     state.signatures[sig] = {
       project: stats.project,
       firstSeen,
       lastSeen: now.toISOString(),
       count: (prior?.count ?? 0) + stats.count,
-      days: [...days].sort(),
+      days,
       sample: stats.sample,
     };
     recurring[sig] = firstSeen !== now.toISOString();

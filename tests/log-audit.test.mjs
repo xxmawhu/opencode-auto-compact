@@ -20,6 +20,7 @@ import {
   monitoringProgress,
   summarizePersistentSignatures,
   renderPersistentSignatures,
+  mergeSignatureDays,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -325,4 +326,25 @@ test("renderPersistentSignatures escapes pipes and renders nothing when empty", 
   );
   assert.equal(lines[0], "## Not yet eliminated");
   assert.equal(lines[4], "| p2 | bbbb | 3 | 2026-11-18 | 9 | a\\|b failed |");
+});
+
+test("mergeSignatureDays accumulates distinct days and survives gaps", () => {
+  assert.deepEqual(mergeSignatureDays(undefined, "20261119"), ["20261119"]);
+  assert.deepEqual(mergeSignatureDays({ firstSeen: "2026-11-19T05:00:00Z" }, "20261119"), [
+    "20261119",
+  ]);
+  assert.deepEqual(
+    mergeSignatureDays(
+      { days: ["20261119", "20261121"], firstSeen: "2026-11-19T05:00:00Z" },
+      "20261122",
+    ),
+    ["20261119", "20261121", "20261122"],
+  );
+  // Same-day re-runs must not inflate the count.
+  assert.deepEqual(mergeSignatureDays({ days: ["20261119"] }, "20261119"), ["20261119"]);
+  // A legacy entry without `days` keeps the day it was first seen.
+  assert.deepEqual(mergeSignatureDays({ firstSeen: "2026-11-18T23:00:00Z" }, "20261119"), [
+    "20261118",
+    "20261119",
+  ]);
 });
