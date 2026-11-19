@@ -74,17 +74,37 @@ main() {
 		exit 0
 	}
 
+	# Only UUID ids are real raise-issue records. The ledger also carries local
+	# observation markers (local-*, observe-*, verify-*) that were never filed,
+	# so `raise-issue status` can never answer for them. Querying those produced
+	# a permanent `FAILED status unreachable for 18 of 47` error line on every
+	# run (first seen 2026-11-19 13:41), which the log audit then reported as a
+	# real error of this project. Skip them by id shape instead of by target
+	# text, so the fix does not depend on ledger wording.
 	local -a ids=() targets=()
-	local id target
-	while IFS=$'\t' read -r id target; do
-		[[ -n "${id}" ]] || continue
-		ids+=("${id}")
-		targets+=("${target}")
-	done < <(python3 -c '
-import json, sys
-for row in json.load(open(sys.argv[1])):
-    print(row["id"] + "\t" + row.get("target", "?"))
+	local id row
+	local -a parsed=()
+	mapfile -t parsed < <(python3 -c '
+import json, re, sys
+uuid = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+rows = json.load(open(sys.argv[1]))
+real = [r for r in rows if uuid.match(str(r.get("id", "")))]
+for r in real:
+    print(str(r["id"]) + "\t" + str(r.get("target", "?")).replace("\n", " "))
+print("SKIPPED\t" + str(len(rows) - len(real)))
 ' "${LEDGER}" 2>/dev/null)
+	local skipped=0
+	for row in "${parsed[@]+"${parsed[@]}"}"; do
+		if [[ "${row}" == SKIPPED$'\t'* ]]; then
+			skipped="${row#SKIPPED$'\t'}"
+			continue
+		fi
+		ids+=("${row%%$'\t'*}")
+		targets+=("${row#*$'\t'}")
+	done
+	if [[ "${skipped}" -gt 0 ]]; then
+		log_line info "skipped ${skipped} ledger rows without a raise-issue record (local observations)"
+	fi
 
 	if [[ ${#ids[@]} -eq 0 ]]; then
 		log_line error "FAILED no issues parsed from ${LEDGER}"
