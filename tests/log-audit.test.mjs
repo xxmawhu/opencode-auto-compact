@@ -725,8 +725,30 @@ test("isDigestArchived only reports a digest once it sits in an archive folder",
     );
 
     fs.mkdirSync(path.join(root, "20260102-log-audit-digest"));
-    fs.writeFileSync(path.join(root, "20260102-log-audit-digest", "log-audit-20260102.md"), "");
+    fs.writeFileSync(
+      path.join(root, "20260102-log-audit-digest", "log-audit-20260102.md"),
+      "| proj/alpha | 3 |\n",
+    );
     assert.equal(isDigestArchived(root, "20260102"), true);
+    assert.equal(
+      isDigestArchived(root, "20260102", ["proj/alpha"]),
+      true,
+      "the archived digest already covers the only erroring project",
+    );
+    // A project that only starts failing in the afternoon appears in the 13:00
+    // report alone; its triage to-do must still be filed that day.
+    assert.equal(
+      isDigestArchived(root, "20260102", ["proj/alpha", "proj/late-starter"]),
+      false,
+      "an archived digest that predates a newly failing project must not suppress it",
+    );
+    // The ` (home)` label is a display hint added later, and a log dir can move
+    // a level without becoming a new project; neither may re-file the digest.
+    assert.equal(
+      isDigestArchived(root, "20260102", ["proj/alpha (home)"]),
+      true,
+      "a display label must not look like a new project",
+    );
     assert.equal(
       isDigestArchived(path.join(root, "no-such-dir"), "20260102"),
       false,

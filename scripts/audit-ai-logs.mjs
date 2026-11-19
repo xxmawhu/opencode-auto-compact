@@ -1016,7 +1016,12 @@ export async function run(options = {}) {
   // must not recreate it (that would re-triage the same content and keep
   // `issues/` from ever reaching zero).
   const endTaskDir = options.endTaskDir ?? path.join(PROJECT_ROOT, "end_task");
-  if (cfg.writeIssueDigest && projectGroups.length > 0 && !isDigestArchived(endTaskDir, day)) {
+  const errorProjects = projectGroups.map((group) => display(group.project));
+  if (
+    cfg.writeIssueDigest &&
+    projectGroups.length > 0 &&
+    !isDigestArchived(endTaskDir, day, errorProjects)
+  ) {
     const digestFile = path.join(issuesDir, `log-audit-${day}.md`);
     let triageText = "";
     try {
@@ -1024,10 +1029,7 @@ export async function run(options = {}) {
     } catch {
       // No ledger yet: every project is untriaged, which is the honest answer.
     }
-    const untriaged = findUntriagedProjects(
-      projectGroups.map((group) => display(group.project)),
-      triageText,
-    );
+    const untriaged = findUntriagedProjects(errorProjects, triageText);
     writeFileAtomic(
       digestFile,
       renderDigest({ day, summary, groups: projectGroups, roots: cfg.roots, untriaged, pending }),
@@ -1047,7 +1049,13 @@ export async function run(options = {}) {
 // A manual re-run used to recreate the file, so the same digest got triaged
 // twice and `issues/` never stayed empty. Once the day's digest is archived,
 // later runs only refresh the report.
-export function isDigestArchived(endTaskDir, day, exists = (p) => fs.existsSync(p)) {
+//
+// Archiving the morning digest must not blind the later runs: a project that
+// starts failing at 10:00 appears only in the 13:00 report, and its triage
+// to-do has to be filed even though the day already has an archive. So the
+// archive counts as done only when it already names every project in the
+// current report; anything new re-opens the digest.
+export function isDigestArchived(endTaskDir, day, projects = [], exists = (p) => fs.existsSync(p)) {
   const name = `log-audit-${day}.md`;
   let entries;
   try {
@@ -1055,9 +1063,24 @@ export function isDigestArchived(endTaskDir, day, exists = (p) => fs.existsSync(
   } catch {
     return false;
   }
-  return entries.some(
-    (entry) => entry.isDirectory() && exists(path.join(endTaskDir, entry.name, name)),
-  );
+  const archived = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(endTaskDir, entry.name, name))
+    .find((candidate) => exists(candidate));
+  if (archived === undefined) return false;
+  if (projects.length === 0) return true;
+  let text;
+  try {
+    text = fs.readFileSync(archived, "utf8");
+  } catch {
+    return false;
+  }
+  // Match on the directory basename with the ` (home)` display label removed:
+  // the label was added after some digests were written, and a path can move
+  // one level up or down without becoming a different project. Comparing full
+  // paths would re-file the whole digest for a pure label change.
+  const baseOf = (name) => path.basename(String(name).replace(/\s+\(home\)$/, ""));
+  return projects.every((project) => text.includes(baseOf(project)));
 }
 
 // A project that reports errors but has no row in `audit/triage.md` is a gap:
