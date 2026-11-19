@@ -61,4 +61,18 @@ elif [[ ${status} -ne 0 ]]; then
 	fail "audit script exited ${status}"
 fi
 
+# Per-defect verification scripts run right after the audit, so a receiver's fix
+# is proven (or refuted) on the same day without adding a second cron entry.
+# Each script is zero-argument and owns its own verdict; a FAIL here is data,
+# not a monitoring failure, so it never trips fail().
+for verify in "${ROOT}"/scripts/verify-*.sh; do
+	[[ -x "${verify}" ]] || continue
+	printf '%s INFO verify start %s\n' "$(date -u +%FT%TZ)" "$(basename "${verify}")" >>"${LOG}"
+	if "${verify}" >>"${LOG}" 2>&1; then
+		printf '%s INFO verify PASS %s\n' "$(date -u +%FT%TZ)" "$(basename "${verify}")" >>"${LOG}"
+	else
+		printf '%s INFO verify FAIL %s\n' "$(date -u +%FT%TZ)" "$(basename "${verify}")" >>"${LOG}"
+	fi
+done
+
 exit 0
