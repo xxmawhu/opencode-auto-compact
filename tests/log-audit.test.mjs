@@ -326,6 +326,45 @@ test("scanFile skips an undated archive copy but keeps a dated live log", async 
   }
 });
 
+test("scanFile dates an undated head block by the first timestamp", async () => {
+  const tmp = makeFixtureDir("audit-head-block");
+  try {
+    const dir = path.join(tmp, "log", "qa");
+    await fs.promises.mkdir(dir, { recursive: true });
+    const limits = { maxFileBytes: 10 * 1024 * 1024, maxMatchesPerFile: 500 };
+    const since = Date.now() - 24 * 3600 * 1000;
+    const head =
+      "Traceback (most recent call last):\nModuleNotFoundError: No module named 'pandas'\n";
+    const stamp = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ` +
+      `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+
+    // Head block older than the first stamp: an append-only file starts with its
+    // oldest content, so the block is history and must not be re-reported.
+    const aged = path.join(dir, "cron.log");
+    await fs.promises.writeFile(aged, `${head}2026-05-01 08:00:00 cron run start\n`);
+    const agedResult = await scanFile(aged, since, limits, () => {
+      assert.fail("an undated head older than the first stamp must not be reported");
+    });
+    assert.equal(agedResult.matches, 0);
+    assert.equal(agedResult.stale, 2);
+
+    // Same shape, but the first stamp is inside the window: the head belongs to
+    // the current segment and must be counted.
+    const fresh = path.join(dir, "cron.today.log");
+    await fs.promises.writeFile(
+      fresh,
+      `${head}${stamp(new Date(Date.now() - 60_000))} cron run start\n`,
+    );
+    const seen = [];
+    const freshResult = await scanFile(fresh, since, limits, (m) => seen.push(m.level));
+    assert.equal(freshResult.matches, 2);
+    assert.deepEqual(seen, ["error", "error"]);
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("isArchiveFileName only matches standalone archive tokens", () => {
   const archived = [
     "cron.log.20261119_history_modules",

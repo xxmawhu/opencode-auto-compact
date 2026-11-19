@@ -428,6 +428,19 @@ export async function scanFile(file, sinceMs, limits, onMatch) {
   // current or an archival copy is only decidable once we know whether the file
   // ever stamps its lines. Bounded by maxMatchesPerFile, so memory stays flat.
   const pending = [];
+  // Appended files are read oldest-first, so the head of a dated file is its
+  // oldest segment. An undated head block (e.g. a months-old traceback) cannot
+  // be dated on its own; it is parked until the first timestamp decides its
+  // age. Counting it unconditionally re-reports a stopped defect on every run:
+  // `check-funding_rate_api/log/qa/cron.log` carried ~400 undated
+  // `ModuleNotFoundError` frames ahead of its first stamp.
+  const headPending = [];
+  const releaseHead = (isCurrent) => {
+    if (!headPending.length) return;
+    if (isCurrent) pending.push(...headPending);
+    else stale += headPending.length;
+    headPending.length = 0;
+  };
   try {
     for await (const line of rl) {
       lineNo += 1;
@@ -435,6 +448,7 @@ export async function scanFile(file, sinceMs, limits, onMatch) {
       if (ts != null) {
         lastTs = ts;
         sawTimestamp = true;
+        releaseHead(ts >= sinceMs);
       }
       const level = classifyLine(line);
       if (!level) continue;
@@ -442,8 +456,12 @@ export async function scanFile(file, sinceMs, limits, onMatch) {
         stale += 1;
         continue;
       }
-      pending.push({ lineNo, level, text: line });
-      if (pending.length >= limits.maxMatchesPerFile) break;
+      if (lastTs == null) {
+        headPending.push({ lineNo, level, text: line });
+      } else {
+        pending.push({ lineNo, level, text: line });
+      }
+      if (pending.length + headPending.length >= limits.maxMatchesPerFile) break;
     }
   } catch {
     return { skipped: "read", matches: 0, stale };
@@ -456,8 +474,12 @@ export async function scanFile(file, sinceMs, limits, onMatch) {
   // would re-report a stopped defect every day and the project could never
   // reach zero.
   if (!sawTimestamp && isArchiveFileName(file)) {
-    return { skipped: "archive", matches: 0, stale: stale + pending.length };
+    return { skipped: "archive", matches: 0, stale: stale + pending.length + headPending.length };
   }
+
+  // No timestamp anywhere: the project simply does not stamp its logs, and the
+  // file mtime is the only clock. Hiding it would be a coverage blind spot.
+  if (!sawTimestamp) releaseHead(true);
 
   for (const match of pending) onMatch(match);
   return { matches: pending.length, stale, capped: pending.length >= limits.maxMatchesPerFile };
