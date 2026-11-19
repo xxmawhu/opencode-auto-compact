@@ -147,8 +147,15 @@ export function isNoise(line) {
   // Summary counters: `check done: ERROR 0 / WARN 0 / INFO 0` is a clean run.
   // A nonzero counter on the same line still reports a failure, so the zero
   // test alone must not hide it.
-  const zero = /\b(ERROR|WARN(?:ING)?)\s*[:=]?\s*0\b/.test(line);
-  const nonzero = /\b(ERROR|WARN(?:ING)?)\s*[:=]?\s*[1-9]\d*\b/.test(line);
+  // Chinese summaries put a short label between the keyword and the colon:
+  // `- ERROR 行数: 0` and `- ERROR 行: 0 条, 归组 0 类`. Both report a clean
+  // run, yet the plain pattern missed them because `行` sits before the colon,
+  // so two healthy lines were counted as errors. The same allowance must apply
+  // to `nonzero`, otherwise `ERROR 行: 3 条` would be read as noise and hide a
+  // real failure.
+  const label = "(?:[\\u4e00-\\u9fff]{1,3}\\s*)?";
+  const zero = new RegExp(`\\b(ERROR|WARN(?:ING)?)\\s*${label}[:=]?\\s*0\\b`).test(line);
+  const nonzero = new RegExp(`\\b(ERROR|WARN(?:ING)?)\\s*${label}[:=]?\\s*[1-9]\\d*\\b`).test(line);
   return zero && !nonzero;
 }
 
