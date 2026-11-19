@@ -11,6 +11,7 @@ import {
   dayKey,
   projectRootOf,
   parseLeadingTimestamp,
+  parseJsonTimestamp,
   discoverLogDirs,
   diffProjectCounts,
 } from "../scripts/audit-ai-logs.mjs";
@@ -87,6 +88,31 @@ test("classifyLine judges structured records by declared level/status", () => {
   assert.equal(classifyLine(JSON.stringify({ status: "FAIL", checks: [] })), "error");
   assert.equal(classifyLine(JSON.stringify({ level: "error", msg: "boom" })), "error");
   assert.equal(classifyLine(JSON.stringify({ level: "info", msg: "ok" })), null);
+});
+
+test("classifyLine trusts the logged level column over the message body", () => {
+  // log-daily-alter writes a config dump; the words are levels, the record is INFO.
+  assert.equal(
+    classifyLine(
+      "2026-11-19 06:25:03.632 +00:00 | INFO     | __main__:main:889 - alert_levels: ['ERROR', 'WARNING', 'CRITICAL']",
+    ),
+    null,
+  );
+  assert.equal(
+    classifyLine("2026-11-19 06:25:03.632 +00:00 | WARNING  | main:1 - retry after ERROR budget"),
+    "warn",
+  );
+  assert.equal(
+    classifyLine("2026-11-18 07:00:05.381 +00:00 | ERROR    | loader:133 - dropped 156 rows"),
+    "error",
+  );
+});
+
+test("parseJsonTimestamp reads the record timestamp for window filtering", () => {
+  const old = '{"status": "FAIL", "timestamp": "2026-11-18T02:00:02.536018", "checks": []}';
+  assert.equal(parseJsonTimestamp(old), Date.parse("2026-11-18T02:00:02.536"));
+  assert.equal(parseJsonTimestamp('{"status": "PASS"}'), null);
+  assert.equal(parseJsonTimestamp("not json"), null);
 });
 
 test("normalizeSignature collapses timestamps, ids and paths", () => {

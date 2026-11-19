@@ -131,11 +131,27 @@ function classifyText(text) {
   return null;
 }
 
+// Loggers that print a dedicated level column state their severity there, and
+// the message may legitimately name other levels: `| INFO | alert_levels:
+// ['ERROR', 'WARNING', 'CRITICAL']` is a configuration dump, not a failure.
+// The column wins over keywords in the message body.
+const LEVEL_FIELD = /\|\s*(TRACE|DEBUG|INFO|SUCCESS|WARNING|WARN|ERROR|CRITICAL|FATAL)\s*\|/;
+
 export function classifyLine(line) {
   const text = String(line ?? "");
   const trimmed = text.trim();
   if (!trimmed) return null;
   if (isNoise(trimmed)) return null;
+
+  const levelField = LEVEL_FIELD.exec(trimmed);
+  if (levelField) {
+    const level = levelField[1].toUpperCase();
+    if (level === "ERROR" || level === "CRITICAL" || level === "FATAL") return "error";
+    if (level === "WARN" || level === "WARNING") return "warn";
+    // TRACE/DEBUG/INFO/SUCCESS: the record is informational whatever the body
+    // says. Tracebacks below it are separate lines without a level column.
+    return null;
+  }
 
   // Structured records: judge the declared level/status, not keywords inside
   // expected-value strings. A PASS report that mentions "ERROR" as a required
@@ -282,6 +298,19 @@ export function parseLeadingTimestamp(line) {
   return null;
 }
 
+// JSONL logs carry the timestamp inside the record, so the leading-timestamp
+// parser never fires and every old record inherits "now" from the file's
+// rotation time. `{"status":"FAIL","timestamp":"2026-11-18T02:00:02"}` written
+// into a file rotated today would otherwise be reported as an active failure.
+export function parseJsonTimestamp(line) {
+  const text = String(line ?? "").trim();
+  if (!text.startsWith("{") || !text.endsWith("}")) return null;
+  const match = /"timestamp"\s*:\s*"([^"]+)"/.exec(text);
+  if (!match) return null;
+  const stamp = Date.parse(match[1]);
+  return Number.isFinite(stamp) ? stamp : null;
+}
+
 async function scanFile(file, sinceMs, limits, onMatch) {
   if (BINARY_EXT.has(path.extname(file).toLowerCase())) return { skipped: "archive" };
   let stat;
@@ -314,7 +343,7 @@ async function scanFile(file, sinceMs, limits, onMatch) {
   try {
     for await (const line of rl) {
       lineNo += 1;
-      const ts = parseLeadingTimestamp(line);
+      const ts = parseLeadingTimestamp(line) ?? parseJsonTimestamp(line);
       if (ts != null) lastTs = ts;
       const level = classifyLine(line);
       if (!level) continue;
