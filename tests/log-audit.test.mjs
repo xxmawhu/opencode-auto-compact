@@ -174,6 +174,20 @@ test("classifyLine trusts the logged level column over the message body", () => 
   assert.equal(classifyLine("[2026-11-19 06:47:49] [INFO] 窗口内无 ERROR"), null);
   assert.equal(classifyLine("[2026-11-19 06:16:49] [ERROR] load failed"), "error");
   assert.equal(classifyLine("[2026-11-19 06:16:49] [WARN] retry"), "warn");
+  // Bare timestamp + lowercase level: the shape this project's own bash jobs
+  // write. `[info]` must win over the word ERROR inside the message body
+  // (2026-11-19 15:41 report counted 4 such lines as this project's errors).
+  assert.equal(
+    classifyLine(
+      "2026-11-19T15:30:30Z [info] eb278787 target=polydata（门铃 STALE 致每 30 分钟 ERROR） status=doing",
+    ),
+    null,
+  );
+  assert.equal(
+    classifyLine("2026-11-19T13:41:27Z [error] FAILED status unreachable for 18 of 47 issues"),
+    "error",
+  );
+  assert.equal(classifyLine("2026-11-19T13:41:27Z [warning] retry after ERROR budget"), "warn");
 });
 
 test("parseJsonTimestamp reads the record timestamp for window filtering", () => {

@@ -189,9 +189,13 @@ function classifyText(text) {
 // the same way. The level column wins over keywords in the message body.
 const LEVEL_FIELD = /\|\s*(TRACE|DEBUG|INFO|SUCCESS|WARNING|WARN|ERROR|CRITICAL|FATAL)\s*\|/;
 // `[ts] [LEVEL] body`: the leading timestamp is bracketed too, so skip that
-// first bracket group before matching the level token.
+// first bracket group before matching the level token. Bare timestamps
+// (`2026-11-19T15:30:30Z [info] body`, the shape our own bash jobs write) and
+// lowercase levels must be recognized as well: without them the declared level
+// is invisible, the body keyword wins, and `[info] ... 每 30 分钟 ERROR）` was
+// counted as an error of this project (2026-11-19 15:41 report, 4 lines).
 const BRACKET_LEVEL =
-  /^(?:\[[^\]]*\]\s*)?\[(TRACE|DEBUG|INFO|SUCCESS|WARNING|WARN|ERROR|CRITICAL|FATAL)\]/;
+  /^(?:\[[^\]]*\]|\d{4}-\d{2}-\d{2}[T ][\d:.+Z-]+)\s*\[(TRACE|DEBUG|INFO|SUCCESS|WARNING|WARN|ERROR|CRITICAL|FATAL)\]/i;
 
 // Terminals colour shell logs, and an escape sequence in front of the record
 // hides its level: `\x1b[0;32m[2026-11-19 08:02:24] [INFO] ... [ERROR] ...` is
