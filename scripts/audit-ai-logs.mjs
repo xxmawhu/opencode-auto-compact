@@ -427,6 +427,43 @@ export function monitoringProgress(
   return { monitored, elapsed, target };
 }
 
+export function renderPersistentSignatures(rows = [], display = (p) => p) {
+  if (rows.length === 0) return [];
+  return [
+    "## Not yet eliminated",
+    "",
+    "| project | signature | days seen | first seen | total lines | sample |",
+    "|---|---|---|---|---|---|",
+    ...rows.map(
+      (row) =>
+        `| ${display(row.project)} | ${row.id} | ${row.daysSeen} | ${String(row.firstSeen).slice(0, 10)} | ${row.count} | ${String(
+          row.sample,
+        )
+          .replace(/\|/g, "\\|")
+          .slice(0, 100)} |`,
+    ),
+    "",
+  ];
+}
+
+// "Eliminated" is a claim about persistence, not about one quiet day. A
+// signature seen on two or more distinct days has survived at least one
+// attempted fix window, so it is the set that must still be driven to zero.
+export function summarizePersistentSignatures(signatures = {}, { minDays = 2, limit = 15 } = {}) {
+  return Object.entries(signatures)
+    .map(([id, entry]) => ({
+      id,
+      project: entry.project ?? "-",
+      daysSeen: (entry.days ?? []).length,
+      firstSeen: entry.firstSeen ?? "",
+      count: entry.count ?? 0,
+      sample: entry.sample ?? "",
+    }))
+    .filter((row) => row.daysSeen >= minDays)
+    .sort((a, b) => b.daysSeen - a.daysSeen || b.count - a.count)
+    .slice(0, limit);
+}
+
 // A log dir that cannot be listed hides every error of the project behind it.
 // Rendering the gap explicitly is what stops a report from looking complete
 // while a project was never read.
@@ -476,6 +513,7 @@ function renderReport({
   state,
   roots,
   pending = [],
+  persistent = [],
 }) {
   const lines = [];
   const totalErrors = groups.reduce((sum, g) => sum + g.errors, 0);
@@ -521,6 +559,9 @@ function renderReport({
       );
     }
     lines.push("");
+  }
+  if (persistent.length > 0) {
+    lines.push(...renderPersistentSignatures(persistent, display));
   }
   if (resolved && resolved.length > 0) {
     lines.push("## Resolved since last run");
@@ -667,13 +708,20 @@ export async function run(options = {}) {
     .filter((sig) => !currentIds.has(sig) && seen[sig])
     .map((sig) => ({ id: sig, ...seen[sig] }));
   for (const [sig, stats] of signatureStats) {
-    const firstSeen = seen[sig]?.firstSeen ?? now.toISOString();
+    const prior = seen[sig];
+    const firstSeen = prior?.firstSeen ?? now.toISOString();
+    // Distinct days a signature appeared, not the calendar span since it was
+    // first seen: an error that hit on day 1 and again on day 20 is not a
+    // 20-day-old problem, and calling it one would overstate what is stuck.
+    const days = new Set(prior?.days ?? (prior ? [dayKey(new Date(prior.firstSeen))] : []));
+    days.add(day);
     state.signatures = state.signatures ?? {};
     state.signatures[sig] = {
       project: stats.project,
       firstSeen,
       lastSeen: now.toISOString(),
-      count: (seen[sig]?.count ?? 0) + stats.count,
+      count: (prior?.count ?? 0) + stats.count,
+      days: [...days].sort(),
       sample: stats.sample,
     };
     recurring[sig] = firstSeen !== now.toISOString();
@@ -747,6 +795,7 @@ export async function run(options = {}) {
       state,
       roots: cfg.roots,
       pending,
+      persistent: summarizePersistentSignatures(state.signatures),
     }),
   );
   for (const group of projectGroups) {

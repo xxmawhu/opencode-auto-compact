@@ -18,6 +18,8 @@ import {
   summarizePendingIssues,
   renderCoverageGaps,
   monitoringProgress,
+  summarizePersistentSignatures,
+  renderPersistentSignatures,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -285,4 +287,42 @@ test("monitoringProgress separates monitored days from calendar days", () => {
   );
   assert.equal(gap.monitored, 1);
   assert.equal(gap.elapsed, 7);
+});
+
+test("summarizePersistentSignatures keeps only signatures seen on 2+ days", () => {
+  const sigs = {
+    aaaa: { project: "p1", days: ["20261119"], count: 5, sample: "one day only" },
+    bbbb: { project: "p2", days: ["20261118", "20261119"], count: 9, sample: "two days" },
+    cccc: { project: "p3", days: ["20261116", "20261117", "20261119"], count: 2, sample: "three" },
+  };
+  const rows = summarizePersistentSignatures(sigs);
+  assert.deepEqual(
+    rows.map((r) => [r.id, r.daysSeen]),
+    [
+      ["cccc", 3],
+      ["bbbb", 2],
+    ],
+  );
+  assert.equal(rows[1].project, "p2");
+  assert.equal(summarizePersistentSignatures({}, { minDays: 1 }).length, 0);
+  assert.equal(summarizePersistentSignatures(sigs, { limit: 1 }).length, 1);
+});
+
+test("renderPersistentSignatures escapes pipes and renders nothing when empty", () => {
+  assert.deepEqual(renderPersistentSignatures([]), []);
+  const lines = renderPersistentSignatures(
+    [
+      {
+        id: "bbbb",
+        project: "/x/p2",
+        daysSeen: 3,
+        firstSeen: "2026-11-18T00:00:00Z",
+        count: 9,
+        sample: "a|b failed",
+      },
+    ],
+    () => "p2",
+  );
+  assert.equal(lines[0], "## Not yet eliminated");
+  assert.equal(lines[4], "| p2 | bbbb | 3 | 2026-11-18 | 9 | a\\|b failed |");
 });
