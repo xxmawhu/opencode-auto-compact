@@ -686,17 +686,41 @@ export async function run(options = {}) {
   // collect reports nobody reviews, and errors would never be eliminated.
   if (cfg.writeIssueDigest && projectGroups.length > 0) {
     const digestFile = path.join(PROJECT_ROOT, "issues", `log-audit-${day}.md`);
+    let triageText = "";
+    try {
+      triageText = fs.readFileSync(path.join(auditDir, "triage.md"), "utf8");
+    } catch {
+      // No ledger yet: every project is untriaged, which is the honest answer.
+    }
+    const untriaged = findUntriagedProjects(
+      projectGroups.map((group) => display(group.project)),
+      triageText,
+    );
     writeFileAtomic(
       digestFile,
-      renderDigest({ day, summary, groups: projectGroups, roots: cfg.roots }),
+      renderDigest({ day, summary, groups: projectGroups, roots: cfg.roots, untriaged }),
     );
-    appendRunLog(`${now.toISOString()} digest=${digestFile}`);
+    appendRunLog(
+      `${now.toISOString()} digest=${digestFile} untriaged=${untriaged.length}${untriaged.length > 0 ? ` [${untriaged.join("; ")}]` : ""}`,
+    );
   }
 
   return { day, reportFile, stateFile, summary, groups: projectGroups, state };
 }
 
-function renderDigest({ day, summary, groups, roots }) {
+// A project that reports errors but has no row in `audit/triage.md` is a gap:
+// the daily digest is the only place where the next session learns which
+// projects still need a verdict. Matching is by directory basename because the
+// ledger records short names while the report records absolute paths.
+export function findUntriagedProjects(projects, triageText) {
+  const ledger = String(triageText ?? "");
+  return projects.filter((name) => {
+    const base = path.basename(String(name));
+    return base !== "" && !ledger.includes(base);
+  });
+}
+
+function renderDigest({ day, summary, groups, roots, untriaged = [] }) {
   const display = (project) => displayProject(project, roots);
   const lines = [];
   lines.push(`# 日志巡检 ${day}：待分诊的报错`);
@@ -715,6 +739,16 @@ function renderDigest({ day, summary, groups, roots }) {
     lines.push(
       `| ${display(group.project)} | ${group.errors} | ${group.warns} | ${group.files} | ${group.newSignatures} | ${group.topSignature.replace(/\|/g, "\\|").slice(0, 120)} |`,
     );
+  }
+  lines.push("");
+  lines.push("## 未登记台账的项目");
+  lines.push("");
+  if (untriaged.length === 0) {
+    lines.push("无：全部报错项目在 `audit/triage.md` 已有判定行。");
+  } else {
+    lines.push("以下项目本轮有报错但台账无判定行，必须补行后再删除本文件：");
+    lines.push("");
+    for (const name of untriaged) lines.push(`- ${name}`);
   }
   lines.push("");
   lines.push("## 分诊要求");

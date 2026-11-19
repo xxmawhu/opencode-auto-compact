@@ -14,6 +14,7 @@ import {
   parseJsonTimestamp,
   discoverLogDirs,
   diffProjectCounts,
+  findUntriagedProjects,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -117,6 +118,22 @@ test("parseJsonTimestamp reads the record timestamp for window filtering", () =>
   assert.equal(parseJsonTimestamp(old), Date.parse("2026-11-18T02:00:02.536"));
   assert.equal(parseJsonTimestamp('{"status": "PASS"}'), null);
   assert.equal(parseJsonTimestamp("not json"), null);
+});
+
+test("findUntriagedProjects flags projects missing from the triage ledger", () => {
+  const ledger = [
+    "| poly/poly-account-data | 779e6546812a | 真实缺陷 | issue | open |",
+    "| qa/check-logroll/check-logroll | ed3948557957 | closed |",
+  ].join("\n");
+  assert.deepEqual(
+    findUntriagedProjects(["poly/poly-account-data", "qa/check-logroll"], ledger),
+    [],
+  );
+  assert.deepEqual(
+    findUntriagedProjects(["poly/poly-account-data", "new-project/new-project"], ledger),
+    ["new-project/new-project"],
+  );
+  assert.deepEqual(findUntriagedProjects(["x/y"], ""), ["x/y"]);
 });
 
 test("normalizeSignature collapses timestamps, ids and paths", () => {
