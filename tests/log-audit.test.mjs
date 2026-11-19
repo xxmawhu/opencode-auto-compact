@@ -13,6 +13,8 @@ import {
   parseJsonTimestamp,
   discoverLogDirs,
   collectLogFiles,
+  isArchiveFileName,
+  scanFile,
   diffProjectCounts,
   findUntriagedProjects,
   summarizePendingIssues,
@@ -280,6 +282,71 @@ test("collectLogFiles descends one level and skips archive subdirs", async () =>
   } finally {
     await fs.promises.rm(tmp, { recursive: true, force: true });
   }
+});
+
+test("scanFile skips an undated archive copy but keeps a dated live log", async () => {
+  const tmp = makeFixtureDir("audit-archive-file");
+  try {
+    const dir = path.join(tmp, "log", "check");
+    await fs.promises.mkdir(dir, { recursive: true });
+    const limits = { maxFileBytes: 10 * 1024 * 1024, maxMatchesPerFile: 500 };
+    const since = Date.now() - 24 * 3600 * 1000;
+
+    // Real case: a verbatim copy of a previous day's crashes, left in the live
+    // log directory. It has no timestamps, so counting it would re-report the
+    // same stopped defect on every run and the project could never reach zero.
+    const copy = path.join(dir, "cron.log.20261119_history_modules");
+    await fs.promises.writeFile(
+      copy,
+      "Traceback (most recent call last):\nModuleNotFoundError: No module named 'loguru'\n",
+    );
+    const copied = await scanFile(copy, since, limits, () => {
+      assert.fail("copied history must not be reported");
+    });
+    assert.equal(copied.skipped, "archive");
+    assert.equal(copied.matches, 0);
+
+    // Same archive-looking name, but the project logs live with timestamps:
+    // `check-hft-restapi-history` writes exactly this shape every day.
+    const live = path.join(dir, "check-history-contract-test.log");
+    await fs.promises.writeFile(live, "2026-11-19 10:00:00 | ERROR    | contract mismatch\n");
+    const seen = [];
+    const liveResult = await scanFile(live, since, limits, (m) => seen.push(m.text));
+    assert.equal(liveResult.matches, 1);
+    assert.equal(seen.length, 1);
+
+    // An undated file without an archive name is still counted: the project may
+    // simply not stamp its logs, and hiding it would be a coverage blind spot.
+    const undated = path.join(dir, "cron.log");
+    await fs.promises.writeFile(undated, "Traceback (most recent call last):\nKeyError: 'x'\n");
+    const undatedResult = await scanFile(undated, since, limits, () => {});
+    assert.equal(undatedResult.matches, 2);
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("isArchiveFileName only matches standalone archive tokens", () => {
+  const archived = [
+    "cron.log.20261119_history_modules",
+    "app.history.log",
+    "scan.archive.log",
+    "run.rotated.log",
+    "old.log",
+    "config.bak",
+  ];
+  const live = [
+    "cron.log",
+    "cron.log.20261119",
+    "check_20261119T10.log",
+    "app.2026111910",
+    "save.20261119",
+    "gitlab-daemon.log",
+    "history_data.log",
+    "oldest.log",
+  ];
+  for (const name of archived) assert.equal(isArchiveFileName(name), true, name);
+  for (const name of live) assert.equal(isArchiveFileName(name), false, name);
 });
 
 test("run() counts errors in a log subdirectory", async () => {

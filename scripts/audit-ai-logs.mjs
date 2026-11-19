@@ -376,7 +376,26 @@ export function parseJsonTimestamp(line) {
   return Number.isFinite(stamp) ? stamp : null;
 }
 
-async function scanFile(file, sinceMs, limits, onMatch) {
+// Rotated or archived logs are sometimes left directly inside `log/` instead of
+// being moved into an `archive/`/`history/` subdirectory — for example
+// `log/check/cron.log.20261119_history_modules`, a verbatim copy of a previous
+// day's crashes. Such a copy carries no timestamps at all, so every line is
+// counted as current and a defect that already stopped is re-reported on every
+// run: the project can never reach zero.
+//
+// The name alone is not enough to skip a file: the live log of a project whose
+// name contains "history" (`check-hft-restapi-history/log/check-history-contract
+// -test.log`) matches it too. Only the combination is decisive — an
+// archive-looking name whose content has no parseable timestamp whatsoever. A
+// live logger stamps its lines, so those files are still scanned.
+const ARCHIVE_FILE_NAME =
+  /(?:^|[._-])(?:archived?|rotated|old|bak)(?:[._-]|$)|[._-]history(?:[._-]|$)/i;
+
+export function isArchiveFileName(file) {
+  return ARCHIVE_FILE_NAME.test(path.basename(file));
+}
+
+export async function scanFile(file, sinceMs, limits, onMatch) {
   if (BINARY_EXT.has(path.extname(file).toLowerCase())) return { skipped: "archive" };
   let stat;
   try {
@@ -402,31 +421,46 @@ async function scanFile(file, sinceMs, limits, onMatch) {
   const stream = fs.createReadStream(file, { encoding: "utf8" });
   const rl = readline.createInterface({ input: stream, crlfDelay: Infinity });
   let lineNo = 0;
-  let matches = 0;
   let stale = 0;
   let lastTs = null;
+  let sawTimestamp = false;
+  // Matches are held until the whole file is read: whether an undated line is
+  // current or an archival copy is only decidable once we know whether the file
+  // ever stamps its lines. Bounded by maxMatchesPerFile, so memory stays flat.
+  const pending = [];
   try {
     for await (const line of rl) {
       lineNo += 1;
       const ts = parseLeadingTimestamp(line) ?? parseJsonTimestamp(line);
-      if (ts != null) lastTs = ts;
+      if (ts != null) {
+        lastTs = ts;
+        sawTimestamp = true;
+      }
       const level = classifyLine(line);
       if (!level) continue;
       if (lastTs != null && lastTs < sinceMs) {
         stale += 1;
         continue;
       }
-      matches += 1;
-      onMatch({ lineNo, level, text: line });
-      if (matches >= limits.maxMatchesPerFile) break;
+      pending.push({ lineNo, level, text: line });
+      if (pending.length >= limits.maxMatchesPerFile) break;
     }
   } catch {
-    return { skipped: "read", matches, stale };
+    return { skipped: "read", matches: 0, stale };
   } finally {
     rl.close();
     stream.destroy();
   }
-  return { matches, stale, capped: matches >= limits.maxMatchesPerFile };
+
+  // Undated archive-named file: a copy of history, not live output. Counting it
+  // would re-report a stopped defect every day and the project could never
+  // reach zero.
+  if (!sawTimestamp && isArchiveFileName(file)) {
+    return { skipped: "archive", matches: 0, stale: stale + pending.length };
+  }
+
+  for (const match of pending) onMatch(match);
+  return { matches: pending.length, stale, capped: pending.length >= limits.maxMatchesPerFile };
 }
 
 function loadState(file) {
