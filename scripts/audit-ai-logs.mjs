@@ -30,7 +30,15 @@ const PROJECT_ROOT = path.resolve(SCRIPT_DIR, "..");
 const TARGET_DAYS = 30;
 
 export const DEFAULTS = {
-  root: "/mnt/beegfs_data/usr/maxx/dev",
+  // Every ai-user project tree, not just `dev/`: regular_task, release and
+  // quant also host projects whose logs never appeared in the audit before
+  // (e.g. /usr/maxx/regular_task/opencode-auto-compact/log/install.*.log).
+  roots: [
+    "/mnt/beegfs_data/usr/maxx/dev",
+    "/mnt/beegfs_data/usr/maxx/regular_task",
+    "/mnt/beegfs_data/usr/maxx/release",
+    "/mnt/beegfs_data/usr/maxx/quant",
+  ],
   // Project logs commonly sit 5-6 levels down (`<group>/<repo>/<proj>/log`,
   // `<group>/<repo>/<proj>/<sub>/log`). Depth 4 missed every one of those.
   maxDepth: 6,
@@ -378,6 +386,15 @@ function renderTrend(lines, trend, display) {
   lines.push("");
 }
 
+// Project label relative to whichever audited root it lives under, so the
+// report stays readable across the four trees.
+function displayProject(project, roots) {
+  for (const root of roots) {
+    if (project.startsWith(`${root}/`)) return project.slice(root.length + 1);
+  }
+  return project;
+}
+
 function renderReport({
   day,
   startedAt,
@@ -388,13 +405,12 @@ function renderReport({
   resolved,
   trend,
   state,
-  root,
+  roots,
 }) {
   const lines = [];
   const totalErrors = groups.reduce((sum, g) => sum + g.errors, 0);
   const totalWarns = groups.reduce((sum, g) => sum + g.warns, 0);
-  const display = (project) =>
-    project.startsWith(`${root}/`) ? project.slice(root.length + 1) : project;
+  const display = (project) => displayProject(project, roots);
   lines.push(`# AI user log audit ${day}`);
   lines.push("");
   lines.push(`- run: ${startedAt.toISOString()}`);
@@ -486,7 +502,9 @@ export async function run(options = {}) {
   const groups = new Map(); // project -> aggregate
   const signatureStats = new Map(); // signature -> { count, project, samples }
 
-  const logDirs = discoverLogDirs(cfg.root, cfg.maxDepth, cfg.skipDirs, cfg.skipLogParents);
+  const logDirs = cfg.roots.flatMap((root) =>
+    discoverLogDirs(root, cfg.maxDepth, cfg.skipDirs, cfg.skipLogParents),
+  );
   scan.logDirs = logDirs.length;
 
   for (const logDir of logDirs) {
@@ -582,8 +600,7 @@ export async function run(options = {}) {
   state.firstRun = state.firstRun ?? now.toISOString();
   state.lastRun = now.toISOString();
   state.lastSignatureIds = [...currentIds];
-  const display = (project) =>
-    project.startsWith(`${cfg.root}/`) ? project.slice(cfg.root.length + 1) : project;
+  const display = (project) => displayProject(project, cfg.roots);
   const currentProjectCounts = Object.fromEntries(
     projectGroups.map((group) => [display(group.project), group.errors]),
   );
@@ -617,7 +634,7 @@ export async function run(options = {}) {
       resolved,
       trend,
       state,
-      root: cfg.root,
+      roots: cfg.roots,
     }),
   );
   for (const group of projectGroups) {
@@ -637,7 +654,7 @@ export async function run(options = {}) {
     const digestFile = path.join(PROJECT_ROOT, "issues", `log-audit-${day}.md`);
     writeFileAtomic(
       digestFile,
-      renderDigest({ day, summary, groups: projectGroups, root: cfg.root }),
+      renderDigest({ day, summary, groups: projectGroups, roots: cfg.roots }),
     );
     appendRunLog(`${now.toISOString()} digest=${digestFile}`);
   }
@@ -645,9 +662,8 @@ export async function run(options = {}) {
   return { day, reportFile, stateFile, summary, groups: projectGroups, state };
 }
 
-function renderDigest({ day, summary, groups, root }) {
-  const display = (project) =>
-    project.startsWith(`${root}/`) ? project.slice(root.length + 1) : project;
+function renderDigest({ day, summary, groups, roots }) {
+  const display = (project) => displayProject(project, roots);
   const lines = [];
   lines.push(`# 日志巡检 ${day}：待分诊的报错`);
   lines.push("");
