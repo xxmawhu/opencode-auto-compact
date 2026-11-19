@@ -100,12 +100,21 @@ const NOISE_PATTERNS = [
   // Static-analysis findings (ruff/eslint/clippy style codes) are not runtime
   // failures: "SIM105 Use `contextlib.suppress(OSError)` instead of ...".
   /^[A-Z]{1,4}\d{2,4}\s/,
+  // Verification output states its outcome explicitly: `[PASS] ... 无 LoadError`
+  // names an exception class as an assertion target, not as a failure.
+  /\[PASS\]/,
   // Lint advice lines ("help: Replace ...").
   /^help:\s/,
 ];
 
 export function isNoise(line) {
-  return NOISE_PATTERNS.some((re) => re.test(line));
+  if (NOISE_PATTERNS.some((re) => re.test(line))) return true;
+  // Summary counters: `check done: ERROR 0 / WARN 0 / INFO 0` is a clean run.
+  // A nonzero counter on the same line still reports a failure, so the zero
+  // test alone must not hide it.
+  const zero = /\b(ERROR|WARN(?:ING)?)\s*[:=]?\s*0\b/.test(line);
+  const nonzero = /\b(ERROR|WARN(?:ING)?)\s*[:=]?\s*[1-9]\d*\b/.test(line);
+  return zero && !nonzero;
 }
 
 function classifyText(text) {

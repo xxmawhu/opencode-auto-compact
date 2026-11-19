@@ -65,6 +65,21 @@ test("classifyLine drops counted-zero noise and code identifiers", () => {
   assert.equal(classifyLine("all good"), null);
 });
 
+test("classifyLine drops pass verdicts and zero counters", () => {
+  const noise = [
+    "[2026-11-19 06:20:42] [PASS] [stage:v1] round 1 无 LoadError、单激活、单次注入",
+    '{"status": "PASS", "checks": [{"expected": "日志不含 ERROR 级别"}]}',
+    "2026-11-19 02:30:04.435 +00:00 | INFO | __main__:main:591 - check done: ERROR 0 / WARN 0 / INFO 0",
+  ];
+  for (const line of noise) assert.equal(classifyLine(line), null, `expected noise: ${line}`);
+  // Nonzero counters and real failures still count.
+  assert.equal(classifyLine("check done: ERROR 3 / WARN 0 / INFO 0"), "error");
+  assert.equal(
+    classifyLine("[2026-11-19 06:16:49] [ERROR] [stage:verify-list] opencode debug info 执行失败"),
+    "error",
+  );
+});
+
 test("classifyLine judges structured records by declared level/status", () => {
   const pass = JSON.stringify({ status: "PASS", checks: [{ expected: "日志含 ERROR 级别" }] });
   assert.equal(classifyLine(pass), null);

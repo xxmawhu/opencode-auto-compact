@@ -19,13 +19,24 @@ import test from "node:test";
 const ROOT = resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const INSTALLER = join(ROOT, "install.sh");
 
+// Every test runs a staged copy of the installer, never the checkout's own.
+// install.sh logs to `<script dir>/log/install.<day>.log`, so a negative test
+// that expects `die` would otherwise write an `[error]` line into the project's
+// real install log and the daily log audit would report it as a live defect
+// (observed on compute-server-98-7, log/install.20261118.log).
 function sandbox() {
-  return mkdtempSync(join(ROOT, "tests", ".tmp-install-"));
+  const root = mkdtempSync(join(ROOT, "tests", ".tmp-install-"));
+  const repo = join(root, "repo");
+  const configDir = join(root, "config", "opencode");
+  cpSync(INSTALLER, join(repo, "install.sh"));
+  cpSync(join(ROOT, "install"), join(repo, "install"), { recursive: true });
+  cpSync(join(ROOT, "dist"), join(repo, "dist"), { recursive: true });
+  return { root, repo, configDir };
 }
 
-function run(args, configDir) {
-  return execFileSync("bash", [INSTALLER, ...args], {
-    cwd: ROOT,
+function run(args, repo, configDir) {
+  return execFileSync("bash", [join(repo, "install.sh"), ...args], {
+    cwd: repo,
     env: { ...process.env, OPENCODE_CONFIG_DIR: configDir },
     encoding: "utf8",
   });
@@ -41,9 +52,9 @@ test("the single entry template default-exports the shared definition object", (
 });
 
 test("install.sh copies one entry and the shared library", () => {
-  const configDir = sandbox();
+  const { root, repo, configDir } = sandbox();
   try {
-    run([], configDir);
+    run([], repo, configDir);
 
     const entry = join(configDir, "plugin", "opencode-auto-compact.ts");
     // The shared library must stay outside `plugin/` and `plugins/`: opencode2
@@ -70,28 +81,28 @@ test("install.sh copies one entry and the shared library", () => {
     assert.match(readFileSync(libEntry, "utf8"), /export \{ default \} from "\.\/index\.js"/);
     assert.equal(JSON.parse(readFileSync(pkg, "utf8")).type, "module");
   } finally {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("install.sh removes a duplicate plugins/ entry left by an older install", () => {
-  const configDir = sandbox();
+  const { root, repo, configDir } = sandbox();
   try {
     const duplicate = join(configDir, "plugins", "opencode-auto-compact.ts");
     mkdirSync(join(configDir, "plugins"), { recursive: true });
     writeFileSync(duplicate, "export default {};\n");
 
-    run([], configDir);
+    run([], repo, configDir);
 
     // Both hosts would load this file a second time after the canonical entry.
     assert.equal(existsSync(duplicate), false, `duplicate entry not removed: ${duplicate}`);
   } finally {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("install.sh fails when the scan dirs keep more than one entry", () => {
-  const configDir = sandbox();
+  const { root, repo, configDir } = sandbox();
   try {
     const stray = join(configDir, "plugins", "opencode-auto-compact-extra.ts");
     mkdirSync(join(configDir, "plugins"), { recursive: true });
@@ -99,7 +110,7 @@ test("install.sh fails when the scan dirs keep more than one entry", () => {
 
     let output = "";
     try {
-      run([], configDir);
+      run([], repo, configDir);
     } catch (error) {
       output = `${error.stdout ?? ""}${error.stderr ?? ""}`;
     }
@@ -109,14 +120,14 @@ test("install.sh fails when the scan dirs keep more than one entry", () => {
       "a second entry in the scan dirs must fail the install",
     );
   } finally {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("install.sh is idempotent and keeps timestamps when content is unchanged", async () => {
-  const configDir = sandbox();
+  const { root, repo, configDir } = sandbox();
   try {
-    run([], configDir);
+    run([], repo, configDir);
     const files = [
       join(configDir, "plugin", "opencode-auto-compact.ts"),
       join(configDir, "opencode-auto-compact-lib", "index.js"),
@@ -126,27 +137,27 @@ test("install.sh is idempotent and keeps timestamps when content is unchanged", 
     const before = files.map((file) => statSync(file).mtimeMs);
     // Contract R6: unchanged content must not look like a new deployment.
     await new Promise((resolve) => setTimeout(resolve, 1_100));
-    run([], configDir);
+    run([], repo, configDir);
     const after = files.map((file) => statSync(file).mtimeMs);
     assert.deepEqual(after, before, "a repeated install must keep file timestamps");
     for (const file of files) assert.ok(existsSync(file), `missing ${file}`);
   } finally {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("install.sh repairs a stale library dir that is not world-traversable", () => {
-  const configDir = sandbox();
+  const { root, repo, configDir } = sandbox();
   try {
     const libDir = join(configDir, "opencode-auto-compact-lib");
     mkdirSync(libDir, { recursive: true });
     chmodSync(libDir, 0o700);
 
-    run([], configDir);
+    run([], repo, configDir);
 
     assert.equal(statSync(libDir).mode & 0o777, 0o755);
   } finally {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -154,13 +165,8 @@ test("install.sh still installs when its own ./log/ is not writable", () => {
   // A shared checkout can carry a ./log/ owned by another account. `tee -a`
   // used to abort the whole install with EACCES there, so the line now falls
   // back to stderr and the install completes.
-  const sandboxDir = sandbox();
-  const repo = join(sandboxDir, "repo");
-  const configDir = join(sandboxDir, "config", "opencode");
+  const { root, repo, configDir } = sandbox();
   try {
-    cpSync(INSTALLER, join(repo, "install.sh"));
-    cpSync(join(ROOT, "install"), join(repo, "install"), { recursive: true });
-    cpSync(join(ROOT, "dist"), join(repo, "dist"), { recursive: true });
     mkdirSync(join(repo, "log"), { recursive: true });
     chmodSync(join(repo, "log"), 0o500);
 
@@ -183,12 +189,12 @@ test("install.sh still installs when its own ./log/ is not writable", () => {
     );
   } finally {
     chmodSync(join(repo, "log"), 0o700);
-    rmSync(sandboxDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("install.sh removes every legacy scanned path", () => {
-  const configDir = sandbox();
+  const { root, repo, configDir } = sandbox();
   try {
     const legacyPaths = [
       join(configDir, "plugin", "opencode-auto-compact"),
@@ -197,28 +203,28 @@ test("install.sh removes every legacy scanned path", () => {
     ];
     for (const path of legacyPaths) mkdirSync(path, { recursive: true });
 
-    run([], configDir);
+    run([], repo, configDir);
 
     // While these directories exist, opencode2 loads them as extra plugins.
     for (const path of legacyPaths) assert.equal(existsSync(path), false, `not removed: ${path}`);
     assert.ok(existsSync(join(configDir, "plugin", "opencode-auto-compact.ts")));
   } finally {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
 test("install.sh --uninstall removes every installed file", () => {
-  const configDir = sandbox();
+  const { root, repo, configDir } = sandbox();
   try {
-    run([], configDir);
+    run([], repo, configDir);
     const duplicate = join(configDir, "plugins", "opencode-auto-compact.ts");
     writeFileSync(duplicate, "export default {};\n");
-    run(["--uninstall"], configDir);
+    run(["--uninstall"], repo, configDir);
     assert.equal(existsSync(join(configDir, "plugin", "opencode-auto-compact.ts")), false);
     assert.equal(existsSync(duplicate), false);
     assert.equal(existsSync(join(configDir, "opencode-auto-compact-lib")), false);
     assert.equal(existsSync(join(configDir, "plugin", "opencode-auto-compact")), false);
   } finally {
-    rmSync(configDir, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
   }
 });
