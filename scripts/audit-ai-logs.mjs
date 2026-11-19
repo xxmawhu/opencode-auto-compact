@@ -329,7 +329,7 @@ function appendRunLog(line) {
   fs.appendFileSync(file, `${line}\n`);
 }
 
-function renderReport({ day, startedAt, sinceMs, scan, groups, recurring, state, root }) {
+function renderReport({ day, startedAt, sinceMs, scan, groups, recurring, resolved, state, root }) {
   const lines = [];
   const totalErrors = groups.reduce((sum, g) => sum + g.errors, 0);
   const totalWarns = groups.reduce((sum, g) => sum + g.warns, 0);
@@ -360,6 +360,22 @@ function renderReport({ day, startedAt, sinceMs, scan, groups, recurring, state,
     );
   }
   lines.push("");
+  if (resolved && resolved.length > 0) {
+    lines.push("## Resolved since last run");
+    lines.push("");
+    lines.push("| project | signature | last seen | total lines | sample |");
+    lines.push("|---|---|---|---|---|");
+    for (const item of resolved) {
+      lines.push(
+        `| ${display(item.project ?? "-")} | ${item.id} | ${String(item.lastSeen ?? "").slice(0, 19)} | ${item.count ?? 0} | ${String(
+          item.sample ?? "",
+        )
+          .replace(/\|/g, "\\|")
+          .slice(0, 100)} |`,
+      );
+    }
+    lines.push("");
+  }
   lines.push("## Error samples");
   lines.push("");
   for (const group of groups) {
@@ -467,6 +483,14 @@ export async function run(options = {}) {
 
   const recurring = {};
   const seen = state.signatures ?? {};
+  // Signatures that were present on the previous run but are gone now: the
+  // direct evidence that a reported defect actually stopped, which is what
+  // "eliminate the errors" is measured by.
+  const previousIds = new Set(state.lastSignatureIds ?? []);
+  const currentIds = new Set(signatureStats.keys());
+  const resolved = [...previousIds]
+    .filter((sig) => !currentIds.has(sig) && seen[sig])
+    .map((sig) => ({ id: sig, ...seen[sig] }));
   for (const [sig, stats] of signatureStats) {
     const firstSeen = seen[sig]?.firstSeen ?? now.toISOString();
     state.signatures = state.signatures ?? {};
@@ -496,6 +520,7 @@ export async function run(options = {}) {
 
   state.firstRun = state.firstRun ?? now.toISOString();
   state.lastRun = now.toISOString();
+  state.lastSignatureIds = [...currentIds];
   state.days[day] = {
     logDirs: scan.logDirs,
     filesRead: scan.filesRead,
@@ -512,6 +537,7 @@ export async function run(options = {}) {
       scan,
       groups: projectGroups,
       recurring,
+      resolved,
       state,
       root: cfg.root,
     }),
