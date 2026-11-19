@@ -16,6 +16,7 @@ import {
   diffProjectCounts,
   findUntriagedProjects,
   summarizePendingIssues,
+  renderCoverageGaps,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -261,4 +262,12 @@ test("diffProjectCounts reports eliminated, new and changed projects", () => {
     ].sort((x, y) => Math.abs(y[3]) - Math.abs(x[3]) || x[0].localeCompare(y[0])),
   );
   assert.deepEqual(diffProjectCounts({}, {}), []);
+});
+
+test("renderCoverageGaps surfaces unreadable log dirs and stays quiet otherwise", () => {
+  assert.deepEqual(renderCoverageGaps(), []);
+  assert.deepEqual(renderCoverageGaps([]), []);
+  const lines = renderCoverageGaps(["/x/y/log"]);
+  assert.equal(lines[0], "## Coverage gaps");
+  assert.ok(lines.includes("- /x/y/log: not readable, errors in it are NOT audited"));
 });

@@ -411,6 +411,19 @@ export function diffProjectCounts(previous = {}, current = {}) {
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.project.localeCompare(b.project));
 }
 
+// A log dir that cannot be listed hides every error of the project behind it.
+// Rendering the gap explicitly is what stops a report from looking complete
+// while a project was never read.
+export function renderCoverageGaps(dirs = []) {
+  if (dirs.length === 0) return [];
+  return [
+    "## Coverage gaps",
+    "",
+    ...dirs.map((dir) => `- ${dir}: not readable, errors in it are NOT audited`),
+    "",
+  ];
+}
+
 function renderTrend(lines, trend, display) {
   if (!trend || trend.length === 0) return;
   lines.push(`## Change vs ${trend.day}`);
@@ -463,10 +476,12 @@ function renderReport({
   lines.push(
     `- log dirs: ${scan.logDirs}, files read: ${scan.filesRead}, files skipped: ${scan.filesSkipped}, stale lines ignored: ${scan.staleMatches}`,
   );
+  lines.push(`- unreadable log dirs: ${scan.unreadableDirs.length}`);
   lines.push(
     `- findings: error lines ${totalErrors}, warn lines ${totalWarns}, projects with errors ${groups.length}`,
   );
   lines.push("");
+  lines.push(...renderCoverageGaps(scan.unreadableDirs));
   lines.push("## Projects with error lines");
   lines.push("");
   lines.push("| project | error lines | warn lines | files | new signatures | top signature |");
@@ -551,7 +566,17 @@ export async function run(options = {}) {
   // with a few minutes of data. The 30-day counter lives in `state.days`.
   const sinceMs = now.getTime() - cfg.windowHours * 3600 * 1000;
 
-  const scan = { logDirs: 0, filesRead: 0, filesSkipped: 0, staleMatches: 0, skipped: {} };
+  const scan = {
+    logDirs: 0,
+    filesRead: 0,
+    filesSkipped: 0,
+    staleMatches: 0,
+    skipped: {},
+    // A log dir that cannot be listed is a blind spot for the whole project it
+    // belongs to: silently `continue`-ing would let the report claim full
+    // coverage while a project's errors were never read.
+    unreadableDirs: [],
+  };
   const groups = new Map(); // project -> aggregate
   const signatureStats = new Map(); // signature -> { count, project, samples }
 
@@ -566,6 +591,7 @@ export async function run(options = {}) {
     try {
       names = await fs.promises.readdir(logDir, { withFileTypes: true });
     } catch {
+      scan.unreadableDirs.push(logDir);
       continue;
     }
     for (const entry of names) {
@@ -713,7 +739,7 @@ export async function run(options = {}) {
     );
   }
 
-  const summary = `day=${day} monitored_days=${Object.keys(state.days).length} log_dirs=${scan.logDirs} files_read=${scan.filesRead} error_lines=${projectGroups.reduce((s, g) => s + g.errors, 0)} projects_with_errors=${projectGroups.length}`;
+  const summary = `day=${day} monitored_days=${Object.keys(state.days).length} log_dirs=${scan.logDirs} unreadable_dirs=${scan.unreadableDirs.length} files_read=${scan.filesRead} error_lines=${projectGroups.reduce((s, g) => s + g.errors, 0)} projects_with_errors=${projectGroups.length}`;
   appendRunLog(`${now.toISOString()} ${summary}`);
 
   // Feedback loop: a daily digest in `issues/` is picked up by the project
