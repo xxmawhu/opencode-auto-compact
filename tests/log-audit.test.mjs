@@ -563,6 +563,13 @@ test("renderCoverageGaps surfaces unreadable log dirs and stays quiet otherwise"
   const lines = renderCoverageGaps(["/x/y/log"]);
   assert.equal(lines[0], "## Coverage gaps");
   assert.ok(lines.includes("- /x/y/log: not readable, errors in it are NOT audited"));
+  // A dir that vanished mid-scan also leaves a hole, but for a different reason
+  // (deleted or unmounted), so it gets its own wording rather than silence.
+  const vanished = renderCoverageGaps([], ["/x/z/log"]);
+  assert.ok(
+    vanished.includes("- /x/z/log: disappeared during the scan, errors in it are NOT audited"),
+  );
+  assert.deepEqual(renderCoverageGaps([], []), []);
 });
 
 test("monitoringProgress separates monitored days from calendar days", () => {

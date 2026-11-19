@@ -617,12 +617,17 @@ export function isVanishedDirError(code) {
 // A log dir that cannot be listed hides every error of the project behind it.
 // Rendering the gap explicitly is what stops a report from looking complete
 // while a project was never read.
-export function renderCoverageGaps(dirs = []) {
-  if (dirs.length === 0) return [];
+// A directory that disappears between discovery and read is not the same as a
+// protected one: nothing there was audited either, but the cause (deleted, or
+// unmounted) is different and the reader needs to know which. Naming both keeps
+// the daily "is anything hidden?" question answerable without re-running the scan.
+export function renderCoverageGaps(unreadable = [], vanished = []) {
+  if (unreadable.length === 0 && vanished.length === 0) return [];
   return [
     "## Coverage gaps",
     "",
-    ...dirs.map((dir) => `- ${dir}: not readable, errors in it are NOT audited`),
+    ...unreadable.map((dir) => `- ${dir}: not readable, errors in it are NOT audited`),
+    ...vanished.map((dir) => `- ${dir}: disappeared during the scan, errors in it are NOT audited`),
     "",
   ];
 }
@@ -713,7 +718,7 @@ function renderReport({
     `- multi-sink duplicates collapsed: ${scan.duplicateMatches ?? 0} (same record written to more than one log file)`,
   );
   lines.push("");
-  lines.push(...renderCoverageGaps(scan.unreadableDirs));
+  lines.push(...renderCoverageGaps(scan.unreadableDirs, scan.vanishedDirs ?? []));
   lines.push("## Projects with error lines");
   lines.push("");
   lines.push("| project | error lines | warn lines | files | new signatures | top signature |");
