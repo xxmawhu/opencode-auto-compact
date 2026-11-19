@@ -75,4 +75,15 @@ for verify in "${ROOT}"/scripts/verify-*.sh; do
 	fi
 done
 
+# Closing a verifying issue is the step that used to need a human: read the
+# report, confirm the project is clean, flip the ledger entry. Doing it in the
+# same run keeps the 30-day loop moving even when no agent is awake; the script
+# only closes entries whose out-of-window date has passed and whose project
+# still exists.
+{
+	printf '%s INFO close start\n' "$(date -u +%FT%TZ)"
+	"${ROOT}/scripts/close-verified-issues.sh" 2>&1
+	printf '%s INFO close finished rc=%s\n' "$(date -u +%FT%TZ)" "$?"
+} >>"${LOG}"
+
 exit 0
