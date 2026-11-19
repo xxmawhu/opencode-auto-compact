@@ -440,6 +440,7 @@ function renderReport({
   trend,
   state,
   roots,
+  pending = [],
 }) {
   const lines = [];
   const totalErrors = groups.reduce((sum, g) => sum + g.errors, 0);
@@ -471,6 +472,18 @@ function renderReport({
   }
   lines.push("");
   renderTrend(lines, trend, display);
+  if (pending.length > 0) {
+    lines.push("## Pending issue targets");
+    lines.push("");
+    lines.push("| issue | target | error lines today | matched projects |");
+    lines.push("|---|---|---|---|");
+    for (const row of pending) {
+      lines.push(
+        `| ${row.id} | ${row.target} | ${row.errors} | ${row.projects.join("<br>") || "-"} |`,
+      );
+    }
+    lines.push("");
+  }
   if (resolved && resolved.length > 0) {
     lines.push("## Resolved since last run");
     lines.push("");
@@ -656,6 +669,21 @@ export async function run(options = {}) {
     projects: currentProjectCounts,
   };
   writeFileAtomic(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+  // Filed issues live in audit/pending-issues.json so every run prints their
+  // current error count; without it "is the fix working yet?" needs a manual
+  // diff of the whole report.
+  let pendingEntries = [];
+  try {
+    pendingEntries = JSON.parse(
+      fs.readFileSync(path.join(auditDir, "pending-issues.json"), "utf8"),
+    );
+  } catch {
+    // Missing or invalid ledger: report no pending rows rather than fail a scan.
+  }
+  const pending = summarizePendingIssues(
+    pendingEntries,
+    projectGroups.map((group) => ({ name: display(group.project), errors: group.errors })),
+  );
   writeFileAtomic(
     reportFile,
     renderReport({
@@ -669,6 +697,7 @@ export async function run(options = {}) {
       trend,
       state,
       roots: cfg.roots,
+      pending,
     }),
   );
   for (const group of projectGroups) {
@@ -698,7 +727,7 @@ export async function run(options = {}) {
     );
     writeFileAtomic(
       digestFile,
-      renderDigest({ day, summary, groups: projectGroups, roots: cfg.roots, untriaged }),
+      renderDigest({ day, summary, groups: projectGroups, roots: cfg.roots, untriaged, pending }),
     );
     appendRunLog(
       `${now.toISOString()} digest=${digestFile} untriaged=${untriaged.length}${untriaged.length > 0 ? ` [${untriaged.join("; ")}]` : ""}`,
@@ -720,7 +749,26 @@ export function findUntriagedProjects(projects, triageText) {
   });
 }
 
-function renderDigest({ day, summary, groups, roots, untriaged = [] }) {
+// Filed issues need a daily number, otherwise "is it getting better?" costs a
+// manual diff of a 25-row report. The ledger of open issues lives in
+// audit/pending-issues.json; each entry matches display project names.
+export function summarizePendingIssues(entries, projects) {
+  const rows = [];
+  for (const entry of Array.isArray(entries) ? entries : []) {
+    const matches = Array.isArray(entry?.match) ? entry.match : [entry?.match].filter(Boolean);
+    if (matches.length === 0) continue;
+    const hit = projects.filter((project) => matches.some((m) => project.name.includes(m)));
+    rows.push({
+      id: String(entry.id ?? "-"),
+      target: String(entry.target ?? matches.join(" / ")),
+      errors: hit.reduce((sum, project) => sum + project.errors, 0),
+      projects: hit.map((project) => project.name),
+    });
+  }
+  return rows;
+}
+
+function renderDigest({ day, summary, groups, roots, untriaged = [], pending = [] }) {
   const display = (project) => displayProject(project, roots);
   const lines = [];
   lines.push(`# 日志巡检 ${day}：待分诊的报错`);
@@ -749,6 +797,22 @@ function renderDigest({ day, summary, groups, roots, untriaged = [] }) {
     lines.push("以下项目本轮有报错但台账无判定行，必须补行后再删除本文件：");
     lines.push("");
     for (const name of untriaged) lines.push(`- ${name}`);
+  }
+  lines.push("");
+  lines.push("## 已提 issue 的目标项目");
+  lines.push("");
+  if (pending.length === 0) {
+    lines.push("无在册 issue（`audit/pending-issues.json` 为空或缺失）。");
+  } else {
+    lines.push("| issue | 目标项目 | 当日 error 行 | 命中项目 |");
+    lines.push("|---|---|---|---|");
+    for (const row of pending) {
+      lines.push(
+        `| ${row.id} | ${row.target} | ${row.errors} | ${row.projects.join("<br>") || "-"} |`,
+      );
+    }
+    lines.push("");
+    lines.push("对比上一日同表即可判定修复是否生效；归零后把该行状态改为 `待验证`/`closed`。");
   }
   lines.push("");
   lines.push("## 分诊要求");

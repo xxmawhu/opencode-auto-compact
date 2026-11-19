@@ -15,6 +15,7 @@ import {
   discoverLogDirs,
   diffProjectCounts,
   findUntriagedProjects,
+  summarizePendingIssues,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -118,6 +119,29 @@ test("parseJsonTimestamp reads the record timestamp for window filtering", () =>
   assert.equal(parseJsonTimestamp(old), Date.parse("2026-11-18T02:00:02.536"));
   assert.equal(parseJsonTimestamp('{"status": "PASS"}'), null);
   assert.equal(parseJsonTimestamp("not json"), null);
+});
+
+test("summarizePendingIssues sums today's error lines per filed issue", () => {
+  const entries = [
+    { id: "aaa", target: "poly", match: ["poly/poly-account-data"] },
+    { id: "bbb", target: "listen", match: ["replay-tg-msg/listen_msg_from_tg"] },
+    { id: "ccc", target: "gone", match: ["no/such-project"] },
+  ];
+  const projects = [
+    { name: "poly/poly-account-data", errors: 368 },
+    { name: "poly/poly-account-data/poly-account-data", errors: 56 },
+    { name: "replay-tg-msg/listen_msg_from_tg", errors: 3 },
+  ];
+  const rows = summarizePendingIssues(entries, projects);
+  assert.equal(rows[0].errors, 424);
+  assert.deepEqual(rows[0].projects, [
+    "poly/poly-account-data",
+    "poly/poly-account-data/poly-account-data",
+  ]);
+  assert.equal(rows[1].errors, 3);
+  // An issue whose target stopped logging reports zero instead of vanishing.
+  assert.equal(rows[2].errors, 0);
+  assert.deepEqual(summarizePendingIssues(null, projects), []);
 });
 
 test("findUntriagedProjects flags projects missing from the triage ledger", () => {
