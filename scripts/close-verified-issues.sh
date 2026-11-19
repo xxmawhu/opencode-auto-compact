@@ -9,13 +9,18 @@
 #
 # Entry contract (audit/pending-issues.json):
 #   "closeWhen": { "project": "<report row>", "dir": "<abs project dir>",
-#                  "from": "<YYYYMMDD>" }
-# An entry is closed only when ALL of the following hold, so a vanished or
-# renamed project cannot be mistaken for a clean one:
+#                  "from": "<YYYYMMDD>", "requireVerify": "<repo-relative script>" }
+# An entry is closed only when ALL of the following hold, so a vanished,
+# renamed or silently-broken project cannot be mistaken for a clean one:
 #   1. today (UTC) >= from                  — the out-of-window date has passed
 #   2. the project directory still exists    — it was not deleted or moved
 #   3. today's report shows 0 error lines    — an absent row counts as 0
 #      (the report only lists projects WITH error lines)
+#   4. if `requireVerify` is set, that zero-argument script exits 0. A project
+#      can log nothing because it is fixed — or because its writer died, or
+#      because the report sampled a scan that had barely started. The report
+#      alone cannot tell those apart, so entries whose evidence needs more than
+#      "no error lines today" name their verification script here.
 #
 # Zero arguments, zero environment variables, always exits 0: a monitoring job
 # must never fail the scheduler. Full output goes to ./log/ one level deep.
@@ -38,9 +43,11 @@ log_line() {
 close_entries() {
 	# shellcheck disable=SC2016
 	"${NODE}" --input-type=module -e '
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
-const [ledgerPath, reportPath, today] = process.argv.slice(1);
+const [ledgerPath, reportPath, today, rootPath] = process.argv.slice(1);
 
 const counts = new Map();
 for (const line of fs.readFileSync(reportPath, "utf8").split("\n")) {
@@ -68,6 +75,19 @@ for (const entry of entries) {
     waiting.push(`${entry.id} (${cw.project} still ${errors})`);
     continue;
   }
+  // A zero row is necessary but not sufficient for projects whose evidence
+  // depends on a long-running writer: the daily scan takes ~6.5h, so at the
+  // 06:40 audit its log is half-written and cannot show a late failure.
+  if (cw.requireVerify) {
+    const script = path.isAbsolute(cw.requireVerify)
+      ? cw.requireVerify
+      : path.join(rootPath, cw.requireVerify);
+    const run = spawnSync("/bin/bash", [script], { cwd: rootPath, encoding: "utf8" });
+    if (run.status !== 0) {
+      waiting.push(`${entry.id} (verify ${cw.requireVerify} rc=${run.status})`);
+      continue;
+    }
+  }
   const shown = counts.has(cw.project) ? "0" : "报告无该行，按 0 计";
   entry.status = "closed";
   entry.note = `${entry.note}｜${today} 报告 ${cw.project} error=${shown}（目录存在）→ closed（close-verified-issues.sh 自动判定）`;
@@ -82,7 +102,7 @@ if (closed.length > 0) {
 
 console.log(`closed=${closed.length} ${closed.join(",")}`);
 console.log(`waiting=${waiting.length} ${waiting.join(" | ")}`);
-' "${LEDGER}" "${REPORT}" "${STAMP}" >>"${LOG}" 2>&1
+' "${LEDGER}" "${REPORT}" "${STAMP}" "${ROOT}" >>"${LOG}" 2>&1
 }
 
 main() {
