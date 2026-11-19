@@ -91,7 +91,7 @@ for row in json.load(open(sys.argv[1])):
 		exit 0
 	fi
 
-	local -a changed=()
+	local -a changed=() unreachable=()
 	local i status replied
 	for i in "${!ids[@]}"; do
 		id="${ids[$i]}"
@@ -118,13 +118,25 @@ for row in json.load(open(sys.argv[1])):
 			[[ -n "${status}" ]] || status="unknown"
 		fi
 		log_line info "${id} target=${targets[$i]} status=${status} replied_at=${replied}"
-		if [[ "${status}" != "doing" || "${replied}" != "-" ]]; then
+		# "unreachable" is our own query failure, not a state change. Reporting it
+		# as changed wrote a digest full of fake transitions during a ZMQ outage
+		# (2026-11-19 09:20 snapshot). Keep it out of the change table and name it
+		# as an error so the outage stays visible in the run log.
+		if [[ "${status}" == "unreachable" ]]; then
+			unreachable+=("${id}")
+		elif [[ "${status}" != "doing" || "${replied}" != "-" ]]; then
 			changed+=("| \`${id}\` | ${targets[$i]} | ${status} | ${replied} |")
 		fi
 	done
 
+	if [[ ${#unreachable[@]} -gt 0 ]]; then
+		log_line error "FAILED status unreachable for ${#unreachable[@]} of ${#ids[@]} issues: ${unreachable[*]}"
+	fi
+
 	if [[ ${#changed[@]} -eq 0 ]]; then
-		log_line info "OK all ${#ids[@]} issues still doing/unreplied"
+		if [[ ${#unreachable[@]} -eq 0 ]]; then
+			log_line info "OK all ${#ids[@]} issues still doing/unreplied"
+		fi
 		exit 0
 	fi
 
