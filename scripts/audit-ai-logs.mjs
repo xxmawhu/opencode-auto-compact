@@ -437,8 +437,15 @@ export async function scanFile(file, sinceMs, limits, onMatch) {
   const headPending = [];
   const releaseHead = (isCurrent) => {
     if (!headPending.length) return;
-    if (isCurrent) pending.push(...headPending);
-    else stale += headPending.length;
+    for (const match of headPending) {
+      if (!isCurrent) {
+        stale += 1;
+      } else if (match.level === "error") {
+        if (pending.length < limits.maxMatchesPerFile) pending.push(match);
+      } else {
+        onMatch(match);
+      }
+    }
     headPending.length = 0;
   };
   try {
@@ -456,12 +463,20 @@ export async function scanFile(file, sinceMs, limits, onMatch) {
         stale += 1;
         continue;
       }
+      const match = { lineNo, level, text: line };
       if (lastTs == null) {
-        headPending.push({ lineNo, level, text: line });
+        headPending.push(match);
+        if (headPending.length >= limits.maxMatchesPerFile) break;
+      } else if (level === "error") {
+        // Only error lines need the buffered copy: the cap exists to bound
+        // memory, and letting a chatty WARNING stream consume it silently
+        // dropped the errors that follow (observed: a watchdog log whose 500
+        // slots were spent on warnings before the first real error).
+        pending.push(match);
+        if (pending.length >= limits.maxMatchesPerFile) break;
       } else {
-        pending.push({ lineNo, level, text: line });
+        onMatch(match);
       }
-      if (pending.length + headPending.length >= limits.maxMatchesPerFile) break;
     }
   } catch {
     return { skipped: "read", matches: 0, stale };

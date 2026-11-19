@@ -365,6 +365,39 @@ test("scanFile dates an undated head block by the first timestamp", async () => 
   }
 });
 
+test("scanFile does not let warnings consume the error cap", async () => {
+  const tmp = makeFixtureDir("audit-warn-cap");
+  try {
+    const dir = path.join(tmp, "log");
+    await fs.promises.mkdir(dir, { recursive: true });
+    const stamp = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ` +
+      `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+    const when = stamp(new Date(Date.now() - 60_000));
+    const lines = [];
+    // A chatty WARNING stream must not spend the buffered-match budget: the
+    // error lines that follow are the ones the audit has to report.
+    for (let i = 0; i < 700; i += 1) lines.push(`${when} | WARNING | degraded tick ${i}`);
+    lines.push(`${when} | ERROR | first real failure`);
+    lines.push(`${when} | ERROR | second real failure`);
+    const file = path.join(dir, "busy.log");
+    await fs.promises.writeFile(file, `${lines.join("\n")}\n`);
+
+    const limits = { maxFileBytes: 10 * 1024 * 1024, maxMatchesPerFile: 5 };
+    const errors = [];
+    let warns = 0;
+    const result = await scanFile(file, Date.now() - 24 * 3600 * 1000, limits, (m) => {
+      if (m.level === "error") errors.push(m.text);
+      else warns += 1;
+    });
+    assert.equal(errors.length, 2);
+    assert.equal(warns, 700);
+    assert.equal(result.capped, false);
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("isArchiveFileName only matches standalone archive tokens", () => {
   const archived = [
     "cron.log.20261119_history_modules",
