@@ -134,8 +134,13 @@ function classifyText(text) {
 // Loggers that print a dedicated level column state their severity there, and
 // the message may legitimately name other levels: `| INFO | alert_levels:
 // ['ERROR', 'WARNING', 'CRITICAL']` is a configuration dump, not a failure.
-// The column wins over keywords in the message body.
+// Bracket-style loggers (`[2026-11-19 06:47:49] [INFO] 窗口内无 ERROR`) behave
+// the same way. The level column wins over keywords in the message body.
 const LEVEL_FIELD = /\|\s*(TRACE|DEBUG|INFO|SUCCESS|WARNING|WARN|ERROR|CRITICAL|FATAL)\s*\|/;
+// `[ts] [LEVEL] body`: the leading timestamp is bracketed too, so skip that
+// first bracket group before matching the level token.
+const BRACKET_LEVEL =
+  /^(?:\[[^\]]*\]\s*)?\[(TRACE|DEBUG|INFO|SUCCESS|WARNING|WARN|ERROR|CRITICAL|FATAL)\]/;
 
 export function classifyLine(line) {
   const text = String(line ?? "");
@@ -143,9 +148,9 @@ export function classifyLine(line) {
   if (!trimmed) return null;
   if (isNoise(trimmed)) return null;
 
-  const levelField = LEVEL_FIELD.exec(trimmed);
-  if (levelField) {
-    const level = levelField[1].toUpperCase();
+  const declared = LEVEL_FIELD.exec(trimmed) ?? BRACKET_LEVEL.exec(trimmed);
+  if (declared) {
+    const level = declared[1].toUpperCase();
     if (level === "ERROR" || level === "CRITICAL" || level === "FATAL") return "error";
     if (level === "WARN" || level === "WARNING") return "warn";
     // TRACE/DEBUG/INFO/SUCCESS: the record is informational whatever the body

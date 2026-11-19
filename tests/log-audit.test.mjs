@@ -106,6 +106,10 @@ test("classifyLine trusts the logged level column over the message body", () => 
     classifyLine("2026-11-18 07:00:05.381 +00:00 | ERROR    | loader:133 - dropped 156 rows"),
     "error",
   );
+  // Bracket-style loggers put the level in `[LEVEL]` right after the timestamp.
+  assert.equal(classifyLine("[2026-11-19 06:47:49] [INFO] 窗口内无 ERROR"), null);
+  assert.equal(classifyLine("[2026-11-19 06:16:49] [ERROR] load failed"), "error");
+  assert.equal(classifyLine("[2026-11-19 06:16:49] [WARN] retry"), "warn");
 });
 
 test("parseJsonTimestamp reads the record timestamp for window filtering", () => {
