@@ -35,7 +35,7 @@ resolve_raise() {
 	local candidate
 	# RAISE_OVERRIDE exists only so tests can inject a stub CLI; the scheduled
 	# job never sets it and falls through to the real binary.
-	for candidate in "${RAISE_OVERRIDE:-}" "${HOME}/.local/bin/raise-issue" "/home/ai_33u3a7sdqpye/.local/bin/raise-issue"; do
+	for candidate in "${RAISE_OVERRIDE:-}" "${HOME}/.local/bin/raise-issue"; do
 		if [[ -n "${candidate}" && -x "${candidate}" ]]; then
 			printf '%s' "${candidate}"
 			return 0
