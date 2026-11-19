@@ -411,6 +411,22 @@ export function diffProjectCounts(previous = {}, current = {}) {
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.project.localeCompare(b.project));
 }
 
+// The 30-day claim is about days *monitored*, not days elapsed. A week of
+// missed cron runs leaves the counter low, so printing the calendar span next
+// to it exposes the gap instead of hiding it behind a growing date range.
+export function monitoringProgress(
+  dayKeys = [],
+  firstRunIso,
+  now = new Date(),
+  target = TARGET_DAYS,
+) {
+  const monitored = dayKeys.length;
+  const start = firstRunIso ? new Date(firstRunIso) : now;
+  const dayMs = 24 * 3600 * 1000;
+  const elapsed = Math.max(1, Math.floor((now.getTime() - start.getTime()) / dayMs) + 1);
+  return { monitored, elapsed, target };
+}
+
 // A log dir that cannot be listed hides every error of the project behind it.
 // Rendering the gap explicitly is what stops a report from looking complete
 // while a project was never read.
@@ -469,9 +485,10 @@ function renderReport({
   lines.push("");
   lines.push(`- run: ${startedAt.toISOString()}`);
   lines.push(`- window since: ${new Date(sinceMs).toISOString()}`);
-  lines.push(`- monitored days: ${Object.keys(state.days).length}`);
+  const progress = monitoringProgress(Object.keys(state.days), state.firstRun, startedAt);
+  lines.push(`- monitored days: ${progress.monitored}`);
   lines.push(
-    `- monitoring progress: ${Object.keys(state.days).length}/30 days (target day: ${TARGET_DAYS} run days, started ${(state.firstRun ?? startedAt.toISOString()).slice(0, 10)})`,
+    `- monitoring progress: ${progress.monitored}/${TARGET_DAYS} days (calendar ${progress.elapsed} day(s) since ${(state.firstRun ?? startedAt.toISOString()).slice(0, 10)}; target day: ${TARGET_DAYS} run days)`,
   );
   lines.push(
     `- log dirs: ${scan.logDirs}, files read: ${scan.filesRead}, files skipped: ${scan.filesSkipped}, stale lines ignored: ${scan.staleMatches}`,

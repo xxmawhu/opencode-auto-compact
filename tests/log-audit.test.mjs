@@ -17,6 +17,7 @@ import {
   findUntriagedProjects,
   summarizePendingIssues,
   renderCoverageGaps,
+  monitoringProgress,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -270,4 +271,18 @@ test("renderCoverageGaps surfaces unreadable log dirs and stays quiet otherwise"
   const lines = renderCoverageGaps(["/x/y/log"]);
   assert.equal(lines[0], "## Coverage gaps");
   assert.ok(lines.includes("- /x/y/log: not readable, errors in it are NOT audited"));
+});
+
+test("monitoringProgress separates monitored days from calendar days", () => {
+  assert.deepEqual(
+    monitoringProgress(["20261119"], "2026-11-19T05:37:44Z", new Date("2026-11-19T09:00:00Z")),
+    { monitored: 1, elapsed: 1, target: 30 },
+  );
+  const gap = monitoringProgress(
+    ["20261119"],
+    "2026-11-19T05:37:44Z",
+    new Date("2026-11-25T09:00:00Z"),
+  );
+  assert.equal(gap.monitored, 1);
+  assert.equal(gap.elapsed, 7);
 });
