@@ -174,6 +174,21 @@ test("findUntriagedProjects flags projects missing from the triage ledger", () =
     ["new-project/new-project"],
   );
   assert.deepEqual(findUntriagedProjects(["x/y"], ""), ["x/y"]);
+  // The report appends " (home)" to projects discovered under a user's home
+  // directory. That suffix is a label, not a name: without stripping it the
+  // same project is reported untriaged on every run.
+  assert.deepEqual(
+    findUntriagedProjects(
+      ["poly/poly-account-data (home)", "shell-tools/repo-updater (home)"],
+      "poly-account-data\nrepo-updater\n",
+    ),
+    [],
+  );
+  assert.deepEqual(
+    findUntriagedProjects(["new-project/new-project (home)"], "poly-account-data\n"),
+    ["new-project/new-project (home)"],
+    "the original label is kept in the result so the digest stays readable",
+  );
 });
 
 test("normalizeSignature collapses timestamps, ids and paths", () => {

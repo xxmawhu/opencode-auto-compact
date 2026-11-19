@@ -1067,7 +1067,12 @@ export function isDigestArchived(endTaskDir, day, exists = (p) => fs.existsSync(
 export function findUntriagedProjects(projects, triageText) {
   const ledger = String(triageText ?? "");
   return projects.filter((name) => {
-    const base = path.basename(String(name));
+    // The report tags logs found under a user's home directory as
+    // "<project> (home)". The suffix is a display hint, not part of the
+    // project name, so it must be stripped before matching the ledger —
+    // otherwise every home-directory project looks untriaged forever.
+    const cleaned = String(name).replace(/\s+\(home\)$/, "");
+    const base = path.basename(cleaned);
     return base !== "" && !ledger.includes(base);
   });
 }
