@@ -40,6 +40,25 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+  # --- Bash ---
+  # SC2016 is disabled on purpose: the audit digests embed literal `path`
+  # examples inside printf single quotes, where expansion is not intended.
+  - repo: local
+    hooks:
+      - id: shellcheck
+        name: shellcheck
+        entry: shellcheck -e SC2016
+        language: system
+        types: [shell]
+        stages: [pre-commit]
+
+      - id: shfmt
+        name: shfmt
+        entry: shfmt -w
+        language: system
+        types: [shell]
+        stages: [pre-commit]
+
   # --- post-merge: 拉取后自动复制插件到 OpenCode 配置目录 ---
   - repo: local
     hooks:

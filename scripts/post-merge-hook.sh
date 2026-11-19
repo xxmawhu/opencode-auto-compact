@@ -13,21 +13,21 @@ readonly SCRIPT_DIR LOG_DIR LOG_FILE
 mkdir -p -- "${LOG_DIR}"
 
 log() {
-  local level="$1"
-  shift
-  printf '[%s] [%s] [stage:install] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${level}" "$*" >>"${LOG_FILE}"
+	local level="$1"
+	shift
+	printf '[%s] [%s] [stage:install] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${level}" "$*" >>"${LOG_FILE}"
 }
 
 fail() {
-  log fail "$*"
-  printf '❌ post-merge install（详见 log/%s）\n' "$(basename -- "${LOG_FILE}")"
-  exit 1
+	log fail "$*"
+	printf '❌ post-merge install（详见 log/%s）\n' "$(basename -- "${LOG_FILE}")"
+	exit 1
 }
 
 log info "post-merge install begin"
 
 if ! bash "${SCRIPT_DIR}/install.sh" >>"${LOG_FILE}" 2>&1; then
-  fail "install.sh failed"
+	fail "install.sh failed"
 fi
 
 log pass "post-merge install finished"
