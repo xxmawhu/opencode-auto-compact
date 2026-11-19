@@ -59,6 +59,20 @@ const entries = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
 const closed = [];
 const waiting = [];
 
+// A ledger entry is identified by its issue id, and closure evidence is written
+// into the note of that entry. Blank or repeated ids make two entries
+// indistinguishable in that evidence, so surface them instead of writing an
+// ambiguous note. A hand-added entry and a script-generated one both defaulted
+// to "-" once, which is exactly the collision this catches.
+const seenIds = new Set();
+const badIds = [];
+for (const entry of entries) {
+  const id = typeof entry.id === "string" ? entry.id.trim() : "";
+  if (id === "" || id === "-" || seenIds.has(id)) badIds.push(entry.target ?? "(no target)");
+  seenIds.add(id);
+}
+if (badIds.length > 0) console.log(`invalid_ids=${badIds.length} ${badIds.join(" | ")}`);
+
 for (const entry of entries) {
   const cw = entry.closeWhen;
   if (!cw || entry.status !== "verifying") continue;
