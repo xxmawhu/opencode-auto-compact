@@ -25,6 +25,7 @@ import {
   mergeSignatureDays,
   run,
   isVanishedDirError,
+  displayProject,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -482,6 +483,22 @@ test("run() collapses one record written to two sinks", async () => {
     assert.equal(result.groups.length, 1);
     assert.equal(result.groups[0].errors, 2);
     assert.equal(result.scan.duplicateMatches, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("displayProject marks home directories instead of passing them off as projects", async () => {
+  const dirname = path.dirname(new URL(import.meta.url).pathname);
+  const root = fs.mkdtempSync(path.join(dirname, ".tmp-home-"));
+  try {
+    const home = path.join(root, "group", "owner");
+    const checkout = path.join(home, "repo");
+    await fs.promises.mkdir(checkout, { recursive: true });
+    await fs.promises.writeFile(path.join(home, ".bashrc"), "# home\n");
+    await fs.promises.mkdir(path.join(checkout, ".git"), { recursive: true });
+    assert.equal(displayProject(home, [root]), "group/owner (home)");
+    assert.equal(displayProject(checkout, [root]), "group/owner/repo");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

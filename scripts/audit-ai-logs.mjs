@@ -637,11 +637,33 @@ function renderTrend(lines, trend, display) {
 
 // Project label relative to whichever audited root it lives under, so the
 // report stays readable across the four trees.
-function displayProject(project, roots) {
-  for (const root of roots) {
-    if (project.startsWith(`${root}/`)) return project.slice(root.length + 1);
+export function displayProject(project, roots) {
+  const label = (() => {
+    for (const root of roots) {
+      if (project.startsWith(`${root}/`)) return project.slice(root.length + 1);
+    }
+    return project;
+  })();
+  // Several ai-users keep their Linux HOME below the audited roots, and
+  // services started from $HOME write `~/log/*`. Without this marker such a
+  // directory looks like a separate project: repo-updater and
+  // poly-account-data each appeared twice, splitting one project's errors
+  // across two rows. The marker keeps the counts intact but tells the reader
+  // that the row is a home directory, not a checkout.
+  return isHomeDirectory(project) ? `${label} (home)` : label;
+}
+
+function isHomeDirectory(dir) {
+  try {
+    if (fs.existsSync(path.join(dir, ".git"))) return false;
+    return (
+      fs.existsSync(path.join(dir, ".bashrc")) ||
+      fs.existsSync(path.join(dir, ".bash_profile")) ||
+      fs.existsSync(path.join(dir, ".profile"))
+    );
+  } catch {
+    return false;
   }
-  return project;
 }
 
 function renderReport({
