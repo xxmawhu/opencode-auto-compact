@@ -33,11 +33,17 @@ export const DEFAULTS = {
   // Every ai-user project tree, not just `dev/`: regular_task, release and
   // quant also host projects whose logs never appeared in the audit before
   // (e.g. /usr/maxx/regular_task/opencode-auto-compact/log/install.*.log).
+  // `ai/`, `bdt2cpp/`, `hftapi/` and `history_data/` are registered ai-user
+  // projects too; without them 11 registered projects had no log coverage.
   roots: [
     "/mnt/beegfs_data/usr/maxx/dev",
     "/mnt/beegfs_data/usr/maxx/regular_task",
     "/mnt/beegfs_data/usr/maxx/release",
     "/mnt/beegfs_data/usr/maxx/quant",
+    "/mnt/beegfs_data/usr/maxx/ai",
+    "/mnt/beegfs_data/usr/maxx/bdt2cpp",
+    "/mnt/beegfs_data/usr/maxx/hftapi",
+    "/mnt/beegfs_data/usr/maxx/history_data",
   ],
   // Project logs commonly sit 5-6 levels down (`<group>/<repo>/<proj>/log`,
   // `<group>/<repo>/<proj>/<sub>/log`). Depth 4 missed every one of those.
