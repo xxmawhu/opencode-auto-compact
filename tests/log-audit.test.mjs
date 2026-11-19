@@ -114,7 +114,12 @@ test("classifyLine does not count mentions of the level in outcome metadata", ()
     // A systemd unit directive, not an exception class.
     "StandardError=append:/mnt/beegfs_data/usr/maxx/dev/live-ops/backup-shm-data/backup-shm-data/log/back-shm-data.log",
   ];
+  // A report banner names the subject of the report, it is not a record:
+  // the file it heads says "Total errors: 0" further down.
+  metadata.push("LOG ERROR CHECK REPORT");
   for (const line of metadata) assert.equal(classifyLine(line), null, `expected noise: ${line}`);
+  // An uppercase failure headline is still a failure, banner rule or not.
+  assert.equal(classifyLine("FATAL ERROR"), "error");
   // The same words in a real failure still count.
   assert.equal(
     classifyLine("2026-11-19T08:45:32Z [ERROR] order_collector.hpp:222 GET /orders failed"),

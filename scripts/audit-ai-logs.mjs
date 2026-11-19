@@ -151,6 +151,12 @@ const NOISE_PATTERNS = [
   // systemd unit directives, not runtime exceptions:
   //   StandardError=append:/.../log/back-shm-data.log
   /^\s*Standard(?:Error|Output)\s*=/,
+  // All-caps banner that titles a report about errors, not an error record:
+  //   LOG ERROR CHECK REPORT   (check-exists-kline, 1 line/day, its own body
+  //                             then says "Total errors: 0")
+  // Restricted to ... REPORT/SUMMARY titles so an uppercase failure line such
+  // as "FATAL ERROR" still counts.
+  /^[A-Z][A-Z ]*(?:REPORT|SUMMARY)$/,
 ];
 
 export function isNoise(line) {
