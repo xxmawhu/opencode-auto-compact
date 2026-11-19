@@ -21,6 +21,7 @@ import {
   renderPersistentSignatures,
   mergeSignatureDays,
   run,
+  isVanishedDirError,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -421,4 +422,11 @@ test("run() two consecutive days: counts, day counter and persistence table", as
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("isVanishedDirError separates a removed dir from a protected one", () => {
+  assert.equal(isVanishedDirError("ENOENT"), true);
+  assert.equal(isVanishedDirError("EACCES"), false, "permission errors are real blind spots");
+  assert.equal(isVanishedDirError("EPERM"), false);
+  assert.equal(isVanishedDirError(undefined), false);
 });

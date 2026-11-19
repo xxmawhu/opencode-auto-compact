@@ -475,6 +475,13 @@ export function summarizePersistentSignatures(signatures = {}, { minDays = 2, li
     .slice(0, limit);
 }
 
+// readdir can fail because the directory is protected (a real blind spot) or
+// because it was removed after enumeration (a race with another project's
+// tests). Only the first one hides errors and belongs in the report.
+export function isVanishedDirError(code) {
+  return code === "ENOENT";
+}
+
 // A log dir that cannot be listed hides every error of the project behind it.
 // Rendering the gap explicitly is what stops a report from looking complete
 // while a project was never read.
@@ -542,7 +549,9 @@ function renderReport({
   lines.push(
     `- log dirs: ${scan.logDirs}, files read: ${scan.filesRead}, files skipped: ${scan.filesSkipped}, stale lines ignored: ${scan.staleMatches}`,
   );
-  lines.push(`- unreadable log dirs: ${scan.unreadableDirs.length}`);
+  lines.push(
+    `- unreadable log dirs: ${scan.unreadableDirs.length}, vanished mid-scan: ${(scan.vanishedDirs ?? []).length}`,
+  );
   lines.push(
     `- findings: error lines ${totalErrors}, warn lines ${totalWarns}, projects with errors ${groups.length}`,
   );
@@ -651,6 +660,9 @@ export async function run(options = {}) {
     // belongs to: silently `continue`-ing would let the report claim full
     // coverage while a project's errors were never read.
     unreadableDirs: [],
+    // Directories that vanished between discovery and readdir: evidence of a
+    // race with a neighbour's tests, not of missing log coverage.
+    vanishedDirs: [],
   };
   const groups = new Map(); // project -> aggregate
   const signatureStats = new Map(); // signature -> { count, project, samples }
@@ -665,7 +677,15 @@ export async function run(options = {}) {
     let names = [];
     try {
       names = await fs.promises.readdir(logDir, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      // A dir that disappeared between enumeration and readdir (another
+      // project's test run creating and removing one) is not a blind spot;
+      // counting it would put a false "errors NOT audited" line in the daily
+      // report every time a neighbour's tests race with the scan.
+      if (isVanishedDirError(error?.code)) {
+        scan.vanishedDirs.push(logDir);
+        continue;
+      }
       scan.unreadableDirs.push(logDir);
       continue;
     }
@@ -821,7 +841,7 @@ export async function run(options = {}) {
     );
   }
 
-  const summary = `day=${day} monitored_days=${Object.keys(state.days).length} log_dirs=${scan.logDirs} unreadable_dirs=${scan.unreadableDirs.length} files_read=${scan.filesRead} error_lines=${projectGroups.reduce((s, g) => s + g.errors, 0)} projects_with_errors=${projectGroups.length}`;
+  const summary = `day=${day} monitored_days=${Object.keys(state.days).length} log_dirs=${scan.logDirs} unreadable_dirs=${scan.unreadableDirs.length} vanished_dirs=${(scan.vanishedDirs ?? []).length} files_read=${scan.filesRead} error_lines=${projectGroups.reduce((s, g) => s + g.errors, 0)} projects_with_errors=${projectGroups.length}`;
   appendRunLog(`${now.toISOString()} ${summary}`, logDir, now);
 
   // Feedback loop: a daily digest in `issues/` is picked up by the project
