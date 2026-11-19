@@ -1,0 +1,122 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import {
+  classifyLine,
+  normalizeSignature,
+  signatureOf,
+  dayKey,
+  projectRootOf,
+  parseLeadingTimestamp,
+} from "../scripts/audit-ai-logs.mjs";
+
+test("classifyLine flags real error shapes", () => {
+  const errors = [
+    "2026-11-19 01:02:03 [ERROR] load failed: missing column",
+    "ERROR: connection refused",
+    '{"level":"fatal","msg":"disk full"}',
+    '{"level":"error","msg":"disk full"}',
+    "ts=2026-11-19 level=error msg=boom",
+    "Traceback (most recent call last):",
+    "FileNotFoundError: [Errno 2] No such file or directory: 'x.csv'",
+    "KeyError: 'trade_date'",
+    "ValueError: invalid literal for int()",
+    "panic: runtime error: index out of range",
+    "UnhandledPromiseRejection: TypeError: x is not a function",
+    "Error: connect ECONNREFUSED 127.0.0.1:443",
+  ];
+  for (const line of errors) assert.equal(classifyLine(line), "error", `expected error: ${line}`);
+});
+
+test("classifyLine does not treat prose, paths or warnings as errors", () => {
+  const neutral = [
+    "2026-11-18 00:05:06 | INFO | scanner: found AI project: /mnt/x/ana-daily-error/y",
+    "248 |         # 故非 error 级真实故障，保留 warning 记录",
+    '{"errors":0,"checked":120}',
+    "[INFO] we find 0 error in today's batch",
+  ];
+  for (const line of neutral) assert.equal(classifyLine(line), null, `expected null: ${line}`);
+  assert.equal(classifyLine("2026-11-18 05:28:29 [WARNING] failed to parse xrp-updown"), "warn");
+});
+
+test("classifyLine keeps warnings out of the error bucket", () => {
+  assert.equal(classifyLine("2026-11-19 [WARN] retry 1/3 after timeout"), "warn");
+  assert.equal(classifyLine("WARNING: deprecated config key"), "warn");
+});
+
+test("classifyLine drops counted-zero noise and code identifiers", () => {
+  const noise = [
+    "[INFO] we find 0 error in today's batch",
+    '{"errors":0,"checked":120}',
+    "no error detected in 42 shards",
+    "error_count=0",
+    "error_rate=0.0000",
+    "error=null",
+    "def parse_error(self, payload):",
+    "function handleError(payload) {",
+    "SIM105 Use `contextlib.suppress(OSError)` instead of `try`-`except`-`pass`",
+  ];
+  for (const line of noise) assert.equal(classifyLine(line), null, `expected noise: ${line}`);
+  assert.equal(classifyLine(""), null);
+  assert.equal(classifyLine("all good"), null);
+});
+
+test("classifyLine judges structured records by declared level/status", () => {
+  const pass = JSON.stringify({ status: "PASS", checks: [{ expected: "日志含 ERROR 级别" }] });
+  assert.equal(classifyLine(pass), null);
+  assert.equal(classifyLine(JSON.stringify({ status: "FAIL", checks: [] })), "error");
+  assert.equal(classifyLine(JSON.stringify({ level: "error", msg: "boom" })), "error");
+  assert.equal(classifyLine(JSON.stringify({ level: "info", msg: "ok" })), null);
+});
+
+test("normalizeSignature collapses timestamps, ids and paths", () => {
+  const a =
+    "2026-11-19T01:02:03Z session ses_19cdc6c20ffeI2WuZ5rzKn47at failed to read /data/x/1.csv pid=4242 after 12 ms";
+  const b =
+    "2026-11-20T11:22:33Z session ses_aaaaaaaaaaaa failed to read /data/y/2.csv pid=9 after 7 ms";
+  assert.equal(normalizeSignature(a), normalizeSignature(b));
+  assert.ok(!normalizeSignature(a).includes("4242"));
+});
+
+test("signatureOf separates projects and root causes", () => {
+  const line = "FileNotFoundError: missing config";
+  assert.equal(signatureOf("/a", line), signatureOf("/a", line));
+  assert.notEqual(signatureOf("/a", line), signatureOf("/b", line));
+  assert.notEqual(signatureOf("/a", line), signatureOf("/a", "KeyError: missing config"));
+});
+
+test("dayKey uses local calendar day", () => {
+  assert.equal(dayKey(new Date(2026, 10, 19, 23, 59, 59)), "20261119");
+  assert.equal(dayKey(new Date(2026, 0, 1, 0, 0, 0)), "20260101");
+});
+
+test("projectRootOf stops at the project marker", () => {
+  const marker = new Set(["/srv/p/memory/root.md", "/srv/p/.git"]);
+  const exists = (p) => marker.has(p);
+  assert.equal(projectRootOf("/srv/p/log", exists), "/srv/p");
+  // No marker: fall back to the parent of the log dir.
+  assert.equal(projectRootOf("/srv/plain/log", exists), "/srv/plain");
+});
+
+test("parseLeadingTimestamp reads common log prefixes", () => {
+  const iso = parseLeadingTimestamp("2026-11-19T05:32:48.981Z [ERROR] boom");
+  assert.equal(iso, Date.parse("2026-11-19T05:32:48.981"));
+  assert.equal(
+    parseLeadingTimestamp("2026-11-18 05:28:29,971 [WARNING] failed"),
+    Date.parse("2026-11-18T05:28:29.971"),
+  );
+  assert.equal(
+    parseLeadingTimestamp("[2026-11-19T02:00:41.383091Z] [ERROR] judge FAIL"),
+    Date.parse("2026-11-19T02:00:41.383"),
+  );
+  assert.equal(
+    parseLeadingTimestamp("2026-11-18 00:00:06.709 +00:00 | ERROR | dropped"),
+    Date.parse("2026-11-18T00:00:06.709"),
+  );
+});
+
+test("parseLeadingTimestamp returns null for continuation lines", () => {
+  assert.equal(parseLeadingTimestamp("Traceback (most recent call last):"), null);
+  assert.equal(parseLeadingTimestamp('  File "x.py", line 3, in <module>'), null);
+  assert.equal(parseLeadingTimestamp(""), null);
+});

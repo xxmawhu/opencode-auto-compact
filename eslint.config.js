@@ -32,7 +32,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ["tests/**/*.mjs", "*.js"],
+    files: ["tests/**/*.mjs", "scripts/**/*.mjs", "*.js"],
     ...tseslint.configs.disableTypeChecked,
     languageOptions: {
       globals: {

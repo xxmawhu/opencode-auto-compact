@@ -15,6 +15,9 @@ memory/
 tmp-issues/
 /.var/
 
+# 日志巡检产物（日报告 + 状态 + 明细，运行时生成）
+/audit/
+
 # 测试产物（install.sh 沙箱目录）
 tests/.tmp*/
 
