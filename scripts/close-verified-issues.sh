@@ -37,86 +37,12 @@ log_line() {
 	printf '%s [%s] %s\n' "$(date -u +%FT%TZ)" "$1" "$2" >>"${LOG}"
 }
 
-# The markdown table parse and the atomic ledger replace live in one node block
-# so a half-written ledger is impossible: the new content is written next to the
-# target (same filesystem, so rename is atomic) and then renamed over it.
+# The markdown parse and the atomic ledger replace live in one node module so a
+# half-written ledger is impossible: the module writes next to the target (same
+# filesystem, so rename is atomic) and renames over it.
 close_entries() {
-	# shellcheck disable=SC2016
-	"${NODE}" --input-type=module -e '
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
-
-const [ledgerPath, reportPath, today, rootPath] = process.argv.slice(1);
-
-const counts = new Map();
-for (const line of fs.readFileSync(reportPath, "utf8").split("\n")) {
-  const m = /^\| ([^|]+?) \| (\d+) \|/.exec(line);
-  if (m) counts.set(m[1].trim(), Number(m[2]));
-}
-
-const entries = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
-const closed = [];
-const waiting = [];
-
-// A ledger entry is identified by its issue id, and closure evidence is written
-// into the note of that entry. Blank or repeated ids make two entries
-// indistinguishable in that evidence, so surface them instead of writing an
-// ambiguous note. A hand-added entry and a script-generated one both defaulted
-// to "-" once, which is exactly the collision this catches.
-const seenIds = new Set();
-const badIds = [];
-for (const entry of entries) {
-  const id = typeof entry.id === "string" ? entry.id.trim() : "";
-  if (id === "" || id === "-" || seenIds.has(id)) badIds.push(entry.target ?? "(no target)");
-  seenIds.add(id);
-}
-if (badIds.length > 0) console.log(`invalid_ids=${badIds.length} ${badIds.join(" | ")}`);
-
-for (const entry of entries) {
-  const cw = entry.closeWhen;
-  if (!cw || entry.status !== "verifying") continue;
-  if (!/^\d{8}$/.test(today) || today < cw.from) {
-    waiting.push(`${entry.id} (until ${cw.from})`);
-    continue;
-  }
-  if (!fs.existsSync(cw.dir)) {
-    waiting.push(`${entry.id} (dir missing: ${cw.dir})`);
-    continue;
-  }
-  const errors = counts.get(cw.project) ?? 0;
-  if (errors !== 0) {
-    waiting.push(`${entry.id} (${cw.project} still ${errors})`);
-    continue;
-  }
-  // A zero row is necessary but not sufficient for projects whose evidence
-  // depends on a long-running writer: the daily scan takes ~6.5h, so at the
-  // 06:40 audit its log is half-written and cannot show a late failure.
-  if (cw.requireVerify) {
-    const script = path.isAbsolute(cw.requireVerify)
-      ? cw.requireVerify
-      : path.join(rootPath, cw.requireVerify);
-    const run = spawnSync("/bin/bash", [script], { cwd: rootPath, encoding: "utf8" });
-    if (run.status !== 0) {
-      waiting.push(`${entry.id} (verify ${cw.requireVerify} rc=${run.status})`);
-      continue;
-    }
-  }
-  const shown = counts.has(cw.project) ? "0" : "报告无该行，按 0 计";
-  entry.status = "closed";
-  entry.note = `${entry.note}｜${today} 报告 ${cw.project} error=${shown}（目录存在）→ closed（close-verified-issues.sh 自动判定）`;
-  closed.push(entry.id);
-}
-
-if (closed.length > 0) {
-  const tmp = `${ledgerPath}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(entries, null, 2)}\n`);
-  fs.renameSync(tmp, ledgerPath);
-}
-
-console.log(`closed=${closed.length} ${closed.join(",")}`);
-console.log(`waiting=${waiting.length} ${waiting.join(" | ")}`);
-' "${LEDGER}" "${REPORT}" "${STAMP}" "${ROOT}" >>"${LOG}" 2>&1
+	"${NODE}" "${ROOT}/scripts/close-verified-issues.mjs" \
+		"${LEDGER}" "${REPORT}" "${STAMP}" "${ROOT}" "${ROOT}" >>"${LOG}" 2>&1
 }
 
 main() {
