@@ -46,8 +46,13 @@ if ! flock -n 9; then
 	exit 0
 fi
 
+# Bracketing every run with UTC timestamps is what proves the 06:40 crontab
+# entry actually fired: the audit's own output lines carry no clock, so a manual
+# rerun would otherwise be indistinguishable from the scheduled one.
+printf '%s INFO start audit day=%s\n' "$(date -u +%FT%TZ)" "${STAMP}" >>"${LOG}"
 "${NODE}" "${SCRIPT}" >>"${LOG}" 2>&1
 status=$?
+printf '%s INFO audit finished rc=%s\n' "$(date -u +%FT%TZ)" "${status}" >>"${LOG}"
 if [[ ${status} -ge 128 ]]; then
 	# Killed by an operator (SIGTERM/SIGINT) or the supervisor: the environment
 	# is fine, so a FAILED digest would be a false task.
