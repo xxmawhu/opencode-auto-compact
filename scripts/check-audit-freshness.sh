@@ -21,9 +21,12 @@ CRON_DIGEST="${ROOT}/issues/log-audit-cron-missing-${STAMP}.md"
 
 # Losing a single crontab entry keeps the other jobs running, so the missing
 # one produces no failure of its own. Each entry below is required for the
-# 30-day loop to be complete.
+# 30-day loop to be complete. The 13:00 recheck is not optional: a project whose
+# full scan finishes at ~12:00 (merge-live-tick) is still half-written at 06:40,
+# so closings that depend on a completed scan only become judgeable there.
 REQUIRED_ENTRIES=(
 	"scripts/daily-log-audit.sh"
+	"scripts/daily-log-audit-recheck.sh"
 	"scripts/check-audit-freshness.sh"
 	"scripts/check-issue-status.sh"
 )
@@ -74,7 +77,7 @@ missing_entries() {
 	local listing entry
 	listing="$(crontab -l 2>/dev/null)" || true
 	for entry in "${REQUIRED_ENTRIES[@]}"; do
-		if ! grep -Fq "${entry}" <<<"${listing}"; then
+		if ! rg -Fq "${entry}" <<<"${listing}"; then
 			printf '%s\n' "${entry}"
 		fi
 	done
