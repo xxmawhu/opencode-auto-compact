@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# 零参数验证脚本：plan/20261119-get-task-from-notion-502.md 的「修复后归零」判据。
+# 零参数验证脚本：plan/20261119-get-task-from-notion-502-reply-verify.md 的验收判据。
 #
-# 判据（三者同时成立才算 PASS）：
-#   1. 今日 task_<day>.log 覆盖 >= 3 个不同分钟，说明 daemon 至少跑过 3 轮；
-#   2. 今日 error_<day>.log 中 `status: 5xx` 命中数为 0；
-#   3. 今日 error_<day>.log 中 `list_comments:569` 命中数为 0（含 Errno 104 等网络瞬态）。
-# 只读目标项目（不写入对方目录），日志落本项目 ./log/ 一级目录。
+# 判据（同时成立才算 PASS）：
+#   1. 修复时间（目标项目 HEAD commit 时间）之后，daemon 覆盖 >= 3 个不同分钟；
+#   2. 修复时间之后，`status: 5xx` 命中数为 0；
+#   3. 修复时间之后，`list_comments:569` 命中数为 0（含 Errno 104 等网络瞬态）。
+# 修复前的历史行单独打印为 pre_*，不计入判定 —— 否则已修项目会因窗口内的旧行永久 FAIL。
+# 只读目标项目，日志落本项目 ./log/ 一级目录。
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -13,81 +14,110 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TARGET=/mnt/beegfs_data/usr/maxx/dev/agents-tools/get-task-from-notion/get-task-from-notion
 LOG_DIR="$PROJECT_ROOT/log"
 
-count_matches() {
-	local pattern="$1"
-	local file="$2"
-	local n
-	if [[ ! -f "$file" ]]; then
-		echo 0
-		return
-	fi
-	# rg -c prints the per-file line count; with no match it prints nothing and
-	# exits 1, so the default covers that branch.
-	n="$(rg -c -e "$pattern" "$file" 2>/dev/null || true)"
-	echo "${n:-0}"
-}
-
-# A "cycle" is a distinct minute in which the daemon logged Notion page work.
-# run_cycle emits one line per page, so distinct minutes are the closest
-# zero-config proxy for "the daemon has run this many times today".
-count_cycles() {
-	local file="$1"
-	local n
-	if [[ ! -f "$file" ]]; then
-		echo 0
-		return
-	fi
-	n="$(rg -oN -e '^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}' "$file" 2>/dev/null | sort -u | wc -l)"
-	echo "${n// /}"
-}
-
 main() {
 	if [[ ! -d "$TARGET" ]]; then
 		echo "[ERROR] target project missing: $TARGET" >&2
 		exit 2
 	fi
 
-	local day stamp log_file today_error_log today_task_log
+	local day stamp log_file fix_iso fix_epoch
 	day="$(date -u +%Y-%m-%d)"
 	stamp="$(date -u +%Y%m%dT%H%M%S)"
 	log_file="$LOG_DIR/verify-get-task-from-notion-502.$stamp.log"
-	today_error_log="$TARGET/log/error_$day.log"
-	today_task_log="$TARGET/log/task_$day.log"
 
 	mkdir -p "$LOG_DIR"
 
-	local five_xx_today list_comments_today cycles_today
-	five_xx_today="$(count_matches 'status: 5[0-9][0-9]' "$today_error_log")"
-	list_comments_today="$(count_matches 'list_comments:569' "$today_error_log")"
-	cycles_today="$(count_cycles "$today_task_log")"
+	fix_iso="$(git -C "$TARGET" log -1 --format=%cI 2>/dev/null || true)"
+	if [[ -z "$fix_iso" ]]; then
+		echo "[ERROR] cannot read HEAD commit time of $TARGET" >&2
+		exit 2
+	fi
+	fix_epoch="$(date -u -d "$fix_iso" +%s)"
 
-	local five_xx_all=0 list_comments_all=0 f
-	for f in "$TARGET"/log/error_*.log; do
-		[[ -f "$f" ]] || continue
-		five_xx_all=$((five_xx_all + $(count_matches 'status: 5[0-9][0-9]' "$f")))
-		list_comments_all=$((list_comments_all + $(count_matches 'list_comments:569' "$f")))
-	done
+	# Undated continuation lines (Traceback frames) inherit the previous line's
+	# timestamp, matching how the audit dates them. Without that inheritance a
+	# frame's mtime would fake a fresh error after the fix.
+	local stats pre_5xx pre_lc after_5xx after_lc cycles
+	stats="$(
+		python3 - "$TARGET/log/error_$day.log" "$TARGET/log/task_$day.log" "$fix_epoch" <<'PY'
+import calendar
+import os
+import re
+import sys
+import time
+
+error_log, task_log, fix_epoch = sys.argv[1], sys.argv[2], int(sys.argv[3])
+stamp = re.compile(r"^\[?(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})")
+
+
+def epoch_of(year, clock):
+    return calendar.timegm(time.strptime(f"{year} {clock}", "%Y-%m-%d %H:%M:%S"))
+
+
+def scan(path, patterns):
+    """Return per-pattern (pre, after) counts and the minutes seen after the fix."""
+    counts = {name: [0, 0] for name in patterns}
+    minutes = set()
+    if not os.path.exists(path):
+        return counts, minutes
+    last = None
+    with open(path, errors="replace") as handle:
+        for line in handle:
+            match = stamp.match(line)
+            if match:
+                last = epoch_of(match.group(1), match.group(2))
+                if last > fix_epoch:
+                    minutes.add(last // 60)
+            if last is None:
+                continue
+            slot = 1 if last > fix_epoch else 0
+            for name, rx in patterns.items():
+                if re.search(rx, line):
+                    counts[name][slot] += 1
+    return counts, minutes
+
+
+PATTERNS = {"5xx": r"status: 5[0-9][0-9]", "lc": r"list_comments:569"}
+counts, _ = scan(error_log, PATTERNS)
+_, minutes = scan(task_log, {})
+print(
+    counts["5xx"][0],
+    counts["lc"][0],
+    counts["5xx"][1],
+    counts["lc"][1],
+    len(minutes),
+)
+PY
+	)"
+	read -r pre_5xx pre_lc after_5xx after_lc cycles <<<"$stats"
+	# A malformed scan (python error, truncated file) must fail loudly: the
+	# numeric comparisons below would otherwise report a spurious verdict.
+	if [[ ! "$pre_5xx" =~ ^[0-9]+$ || ! "$after_5xx" =~ ^[0-9]+$ || ! "$cycles" =~ ^[0-9]+$ ]]; then
+		echo "[ERROR] cannot parse scan output: ${stats:-<empty>}" >&2
+		exit 2
+	fi
 
 	local verdict="FAIL" reason
-	if [[ "$five_xx_today" -gt 0 || "$list_comments_today" -gt 0 ]]; then
-		reason="今日仍有 ERROR 命中（5xx=$five_xx_today, list_comments:569=$list_comments_today）"
-	elif [[ "$cycles_today" -lt 3 ]]; then
+	if [[ "$after_5xx" -gt 0 || "$after_lc" -gt 0 ]]; then
+		reason="修复后仍有 ERROR（5xx=$after_5xx, list_comments:569=$after_lc）"
+	elif [[ "$cycles" -lt 3 ]]; then
 		verdict="INCONCLUSIVE"
-		reason="今日 cycle 数 $cycles_today < 3，样本不足"
+		reason="修复后 cycle 数 $cycles < 3，样本不足"
 	else
 		verdict="PASS"
-		reason="今日 cycle 数 $cycles_today >= 3，且两条签名均为 0"
+		reason="修复后 $cycles 个 cycle 内两条签名均为 0"
 	fi
 
 	{
 		echo "[$(date -u +%FT%TZ)] verify get-task-from-notion 502 log level"
 		echo "target_head: $(git -C "$TARGET" log --oneline -1 2>/dev/null || echo unknown)"
+		echo "fix_time: $fix_iso"
 		echo "day: $day"
-		echo "cycles_today: $cycles_today"
-		echo "five_xx_today: $five_xx_today"
-		echo "list_comments_569_today: $list_comments_today"
-		echo "five_xx_all_time: $five_xx_all"
-		echo "list_comments_569_all_time: $list_comments_all"
+		echo "pre_5xx: $pre_5xx"
+		echo "pre_list_comments_569: $pre_lc"
+		echo "after_5xx: $after_5xx"
+		echo "after_list_comments_569: $after_lc"
+		echo "cycles_after_fix: $cycles"
 		echo "verdict: $verdict"
 		echo "reason: $reason"
 	} | tee -a "$log_file"
@@ -95,4 +125,4 @@ main() {
 	[[ "$verdict" == "PASS" ]]
 }
 
-main "$@"
+main
