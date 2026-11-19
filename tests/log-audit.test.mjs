@@ -749,6 +749,24 @@ test("run() two consecutive days: counts, day counter and persistence table", as
     const sig = Object.values(second.state.signatures).find((s) => s.days?.length === 2);
     assert.ok(sig, "signature seen on both days records both days");
     assert.deepEqual(sig.days, ["20261119", "20261120"]);
+
+    // The day-1 series feeds a 30-day trend; the same day was run twice above,
+    // so an append-style history would report 2 rows for day A and double it.
+    const findings = fs
+      .readFileSync(path.join(opts.auditDir, "findings.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    assert.equal(
+      findings.filter((row) => row.day === first.day).length,
+      1,
+      "a repeated run of the same day must not add a second row",
+    );
+    assert.equal(
+      findings.filter((row) => row.day === second.day).length,
+      1,
+      "the next day gets its own single row",
+    );
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

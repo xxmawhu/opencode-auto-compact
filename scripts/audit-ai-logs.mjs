@@ -539,6 +539,43 @@ function writeFileAtomic(file, content) {
   fs.renameSync(tmp, file);
 }
 
+// `findings.jsonl` is the per-day series behind a 30-day trend: one line per
+// (day, project). Appending on every run duplicated a day's entries 39 times on
+// 2026-11-19 (reruns while the audit was being written), so anything summing
+// the file over-counted that day. Rewrite the day's block instead; other days
+// are kept verbatim, and unknown lines are preserved rather than dropped.
+export function writeDailyFindings(historyFile, day, groups = []) {
+  const kept = [];
+  try {
+    for (const line of fs.readFileSync(historyFile, "utf8").split("\n")) {
+      if (line.trim() === "") continue;
+      let parsed;
+      try {
+        parsed = JSON.parse(line);
+      } catch {
+        kept.push(line);
+        continue;
+      }
+      if (parsed?.day !== day) kept.push(line);
+    }
+  } catch {
+    // First run of the project: no history yet.
+  }
+  const rows = groups.map((group) =>
+    JSON.stringify({
+      day,
+      project: group.project,
+      errors: group.errors,
+      warns: group.warns,
+      topSignatureId: group.topSignatureId,
+    }),
+  );
+  const tmp = `${historyFile}.tmp`;
+  fs.mkdirSync(path.dirname(historyFile), { recursive: true });
+  fs.writeFileSync(tmp, `${[...kept, ...rows].join("\n")}\n`);
+  fs.renameSync(tmp, historyFile);
+}
+
 function appendRunLog(line, logDir = path.join(PROJECT_ROOT, "log"), at = new Date()) {
   const file = path.join(logDir, `log-audit.${dayKey(at)}.log`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -1021,12 +1058,7 @@ export async function run(options = {}) {
       persistent: summarizePersistentSignatures(state.signatures),
     }),
   );
-  for (const group of projectGroups) {
-    fs.appendFileSync(
-      historyFile,
-      `${JSON.stringify({ day, project: group.project, errors: group.errors, warns: group.warns, topSignatureId: group.topSignatureId })}\n`,
-    );
-  }
+  writeDailyFindings(historyFile, day, projectGroups);
 
   const summary = `day=${day} monitored_days=${Object.keys(state.days).length} log_dirs=${scan.logDirs} unreadable_dirs=${scan.unreadableDirs.length} vanished_dirs=${(scan.vanishedDirs ?? []).length} files_read=${scan.filesRead} error_lines=${projectGroups.reduce((s, g) => s + g.errors, 0)} projects_with_errors=${projectGroups.length}`;
   appendRunLog(`${now.toISOString()} ${summary}`, logDir, now);
