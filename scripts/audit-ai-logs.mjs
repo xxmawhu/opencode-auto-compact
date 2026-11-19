@@ -193,8 +193,16 @@ const LEVEL_FIELD = /\|\s*(TRACE|DEBUG|INFO|SUCCESS|WARNING|WARN|ERROR|CRITICAL|
 const BRACKET_LEVEL =
   /^(?:\[[^\]]*\]\s*)?\[(TRACE|DEBUG|INFO|SUCCESS|WARNING|WARN|ERROR|CRITICAL|FATAL)\]/;
 
+// Terminals colour shell logs, and an escape sequence in front of the record
+// hides its level: `\x1b[0;32m[2026-11-19 08:02:24] [INFO] ... [ERROR] ...` is
+// an INFO line replaying an old error, but BRACKET_LEVEL cannot see the [INFO]
+// because the line no longer starts with `[`. Strip colour first so "declared
+// level wins" holds for coloured output too (scan_issue: 5 of 10 counted lines).
+// eslint-disable-next-line no-control-regex -- ESC is the whole point of this pattern
+const ANSI_ESCAPE = /\x1b\[[0-9;]*[A-Za-z]/g;
+
 export function classifyLine(line) {
-  const text = String(line ?? "");
+  const text = String(line ?? "").replace(ANSI_ESCAPE, "");
   const trimmed = text.trim();
   if (!trimmed) return null;
   if (isNoise(trimmed)) return null;

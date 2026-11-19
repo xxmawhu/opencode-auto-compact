@@ -48,6 +48,24 @@ test("classifyLine flags real error shapes", () => {
   for (const line of errors) assert.equal(classifyLine(line), "error", `expected error: ${line}`);
 });
 
+test("classifyLine sees through ANSI colour when the line declares its own level", () => {
+  // restart.sh wraps replayed records in colour: the outer level is INFO and
+  // the inner [ERROR] is an 11-18 line being echoed on 11-19.
+  assert.equal(
+    classifyLine(
+      "\x1b[0;32m[2026-11-19 08:02:24] [INFO]   [2026-11-18 11:47:39] [ERROR] [REAP-DUP-KILL] FAILED to kill pid=1\x1b[0m",
+    ),
+    null,
+  );
+  // Colouring must not hide a real failure: the declared level is still read.
+  assert.equal(classifyLine("\x1b[0;31m[2026-11-19 08:02:24] [ERROR] load failed\x1b[0m"), "error");
+  assert.equal(
+    classifyLine("\x1b[1;33m2026-11-19 09:01:10 | ERROR    | disk_checker failed\x1b[0m"),
+    "error",
+  );
+  assert.equal(classifyLine("\x1b[32m[INFO] done\x1b[0m"), null);
+});
+
 test("classifyLine does not treat prose, paths or warnings as errors", () => {
   const neutral = [
     "2026-11-18 00:05:06 | INFO | scanner: found AI project: /mnt/x/ana-daily-error/y",
