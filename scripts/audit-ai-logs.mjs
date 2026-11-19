@@ -728,11 +728,11 @@ function renderReport({
   if (pending.length > 0) {
     lines.push("## Pending issue targets");
     lines.push("");
-    lines.push("| issue | target | error lines today | matched projects |");
-    lines.push("|---|---|---|---|");
+    lines.push("| issue | target | status | error lines today | matched projects |");
+    lines.push("|---|---|---|---|---|");
     for (const row of pending) {
       lines.push(
-        `| ${row.id} | ${row.target} | ${row.errors} | ${row.projects.join("<br>") || "-"} |`,
+        `| ${row.id} | ${row.target} | ${row.status} | ${row.errors} | ${row.projects.join("<br>") || "-"} |`,
       );
     }
     lines.push("");
@@ -1103,15 +1103,36 @@ export function findUntriagedProjects(projects, triageText) {
 // Filed issues need a daily number, otherwise "is it getting better?" costs a
 // manual diff of a 25-row report. The ledger of open issues lives in
 // audit/pending-issues.json; each entry matches display project names.
+// Match strings are written by whoever filed the issue, sometimes as the
+// absolute-ish path under an audited root (`dev/qa/check-funding_rate_api/...`)
+// and sometimes as the display name the report prints (`qa/check-funding_rate_api/...`).
+// Comparing them verbatim silently reports 0 errors for the biggest sources —
+// a 502-line project looked clean — so both sides are normalised: drop the
+// audited-root prefix and the ` (home)` display label.
+const AUDIT_ROOT_PREFIX = /^(?:dev|regular_task|release|quant|ai|bdt2cpp|hftapi|history_data)\//;
+
+export function normalizeProjectName(name) {
+  let out = String(name ?? "")
+    .trim()
+    .replace(/\s+\(home\)$/, "");
+  while (AUDIT_ROOT_PREFIX.test(out)) out = out.replace(AUDIT_ROOT_PREFIX, "");
+  return out;
+}
+
 export function summarizePendingIssues(entries, projects) {
   const rows = [];
   for (const entry of Array.isArray(entries) ? entries : []) {
     const matches = Array.isArray(entry?.match) ? entry.match : [entry?.match].filter(Boolean);
     if (matches.length === 0) continue;
-    const hit = projects.filter((project) => matches.some((m) => project.name.includes(m)));
+    const wanted = matches.map(normalizeProjectName).filter((m) => m !== "");
+    const hit = projects.filter((project) => {
+      const name = normalizeProjectName(project.name);
+      return wanted.some((m) => name.includes(m));
+    });
     rows.push({
       id: String(entry.id ?? "-"),
       target: String(entry.target ?? matches.join(" / ")),
+      status: String(entry.status ?? "-"),
       errors: hit.reduce((sum, project) => sum + project.errors, 0),
       projects: hit.map((project) => project.name),
     });
@@ -1155,11 +1176,11 @@ function renderDigest({ day, summary, groups, roots, untriaged = [], pending = [
   if (pending.length === 0) {
     lines.push("无在册 issue（`audit/pending-issues.json` 为空或缺失）。");
   } else {
-    lines.push("| issue | 目标项目 | 当日 error 行 | 命中项目 |");
-    lines.push("|---|---|---|---|");
+    lines.push("| issue | 目标项目 | 状态 | 当日 error 行 | 命中项目 |");
+    lines.push("|---|---|---|---|---|");
     for (const row of pending) {
       lines.push(
-        `| ${row.id} | ${row.target} | ${row.errors} | ${row.projects.join("<br>") || "-"} |`,
+        `| ${row.id} | ${row.target} | ${row.status} | ${row.errors} | ${row.projects.join("<br>") || "-"} |`,
       );
     }
     lines.push("");

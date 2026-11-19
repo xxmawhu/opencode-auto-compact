@@ -18,6 +18,7 @@ import {
   diffProjectCounts,
   findUntriagedProjects,
   summarizePendingIssues,
+  normalizeProjectName,
   renderCoverageGaps,
   monitoringProgress,
   summarizePersistentSignatures,
@@ -158,6 +159,21 @@ test("summarizePendingIssues sums today's error lines per filed issue", () => {
   // An issue whose target stopped logging reports zero instead of vanishing.
   assert.equal(rows[2].errors, 0);
   assert.deepEqual(summarizePendingIssues(null, projects), []);
+  // A ledger match may be written with the audited-root prefix (`dev/qa/x`)
+  // while the report prints the display name (`qa/x`). Comparing verbatim
+  // reported 0 errors for a 502-line project, so both sides normalise.
+  const prefixed = summarizePendingIssues(
+    [{ id: "issue-1", target: "funding", status: "verifying", match: ["dev/qa/check-funding/x"] }],
+    [{ name: "qa/check-funding/x", errors: 502 }],
+  );
+  assert.equal(prefixed.length, 1);
+  assert.equal(prefixed[0].errors, 502, "root prefix in the ledger must still match");
+  assert.equal(prefixed[0].status, "verifying", "status travels with the row");
+  assert.equal(
+    normalizeProjectName("dev/shell-tools/repo-updater (home)"),
+    "shell-tools/repo-updater",
+    "root prefix and home label are both display decorations",
+  );
 });
 
 test("findUntriagedProjects flags projects missing from the triage ledger", () => {
