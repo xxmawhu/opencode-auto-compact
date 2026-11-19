@@ -37,9 +37,22 @@ mkdir -p "${ROOT}/log" "${ROOT}/audit/reports" || exit 0
 
 cd "${ROOT}" || fail "cannot cd into ${ROOT}"
 
+# A second concurrent run would rewrite the same report and state files, so the
+# slower one silently discards the faster one's findings. One instance only:
+# the extra run logs a line and leaves the schedule to the holder.
+exec 9>"${ROOT}/audit/.run.lock"
+if ! flock -n 9; then
+	printf '%s INFO skipped: another audit run holds the lock\n' "$(date -u +%FT%TZ)" >>"${LOG}"
+	exit 0
+fi
+
 "${NODE}" "${SCRIPT}" >>"${LOG}" 2>&1
 status=$?
-if [[ ${status} -ne 0 ]]; then
+if [[ ${status} -ge 128 ]]; then
+	# Killed by an operator (SIGTERM/SIGINT) or the supervisor: the environment
+	# is fine, so a FAILED digest would be a false task.
+	printf '%s INFO interrupted by signal %s\n' "$(date -u +%FT%TZ)" "$((status - 128))" >>"${LOG}"
+elif [[ ${status} -ne 0 ]]; then
 	fail "audit script exited ${status}"
 fi
 

@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import {
@@ -8,6 +11,7 @@ import {
   dayKey,
   projectRootOf,
   parseLeadingTimestamp,
+  discoverLogDirs,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -119,4 +123,39 @@ test("parseLeadingTimestamp returns null for continuation lines", () => {
   assert.equal(parseLeadingTimestamp("Traceback (most recent call last):"), null);
   assert.equal(parseLeadingTimestamp('  File "x.py", line 3, in <module>'), null);
   assert.equal(parseLeadingTimestamp(""), null);
+});
+
+test("discoverLogDirs reaches depth-6 project logs", async () => {
+  const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "log-audit-depth-"));
+  try {
+    const deep = path.join(tmp, "group", "repo", "proj", "proj2");
+    await fs.promises.mkdir(path.join(deep, "log"), { recursive: true });
+    await fs.promises.mkdir(path.join(tmp, "group", "repo", "proj", "log"), { recursive: true });
+    const found = discoverLogDirs(tmp, 6, new Set([".git"]), new Set(["scripts"]));
+    assert.equal(found.length, 2, `expected 2 log dirs, got ${found.length}`);
+    assert.ok(found.some((d) => d.endsWith(path.join("proj", "proj2", "log"))));
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("discoverLogDirs skips .local homes and scripts/log", async () => {
+  const tmp = await fs.promises.mkdtemp(path.join(os.tmpdir(), "log-audit-skip-"));
+  try {
+    const skipDirs = new Set([".local", ".git"]);
+    const skipLogParents = new Set(["scripts"]);
+    await fs.promises.mkdir(path.join(tmp, "acct", ".local", "share", "tool", "log"), {
+      recursive: true,
+    });
+    await fs.promises.mkdir(path.join(tmp, "acct", ".local", "bin", "log"), { recursive: true });
+    await fs.promises.mkdir(path.join(tmp, "proj", "scripts", "log"), { recursive: true });
+    await fs.promises.mkdir(path.join(tmp, "proj", "log"), { recursive: true });
+    const found = discoverLogDirs(tmp, 6, skipDirs, skipLogParents);
+    assert.deepEqual(
+      found.map((d) => path.relative(tmp, d)),
+      [path.join("proj", "log")],
+    );
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
 });

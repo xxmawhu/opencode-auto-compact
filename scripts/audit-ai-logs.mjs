@@ -31,7 +31,9 @@ const TARGET_DAYS = 30;
 
 export const DEFAULTS = {
   root: "/mnt/beegfs_data/usr/maxx/dev",
-  maxDepth: 4,
+  // Project logs commonly sit 5-6 levels down (`<group>/<repo>/<proj>/log`,
+  // `<group>/<repo>/<proj>/<sub>/log`). Depth 4 missed every one of those.
+  maxDepth: 6,
   windowHours: 24,
   maxFileBytes: 200 * 1024 * 1024,
   maxMatchesPerFile: 500,
@@ -40,12 +42,19 @@ export const DEFAULTS = {
     "node_modules",
     ".git",
     ".var",
+    // `~/.local` trees hold per-account homes (`.local/bin/log`,
+    // `.local/share/<tool>/log`). Their logs belong to the OpenCode/ULW-PM
+    // runtime, not to a project under audit, and they duplicate every project.
+    ".local",
     "build",
     "dist",
     "history_log",
     "history",
     "archive",
   ]),
+  // `<proj>/scripts/log` collects one-off build/check script output, not the
+  // project's runtime log. Counting it inflates coverage with transient noise.
+  skipLogParents: new Set(["scripts"]),
   AUTO_ISSUE: false,
   maxIssuesPerRun: 3,
   // Write a daily triage digest into ./issues/ so the project monitor turns the
@@ -187,7 +196,7 @@ export function projectRootOf(logDir, exists = (p) => fs.existsSync(p)) {
   return path.dirname(path.resolve(logDir));
 }
 
-function discoverLogDirs(root, maxDepth, skipDirs) {
+export function discoverLogDirs(root, maxDepth, skipDirs, skipLogParents = new Set()) {
   const found = [];
   const walk = (dir, depth) => {
     if (depth > maxDepth) return;
@@ -202,6 +211,7 @@ function discoverLogDirs(root, maxDepth, skipDirs) {
       if (skipDirs.has(entry.name)) continue;
       const child = path.join(dir, entry.name);
       if (entry.name === "log") {
+        if (skipLogParents.has(path.basename(dir))) continue;
         found.push(child);
         continue;
       }
@@ -425,7 +435,7 @@ export async function run(options = {}) {
   const groups = new Map(); // project -> aggregate
   const signatureStats = new Map(); // signature -> { count, project, samples }
 
-  const logDirs = discoverLogDirs(cfg.root, cfg.maxDepth, cfg.skipDirs);
+  const logDirs = discoverLogDirs(cfg.root, cfg.maxDepth, cfg.skipDirs, cfg.skipLogParents);
   scan.logDirs = logDirs.length;
 
   for (const logDir of logDirs) {
