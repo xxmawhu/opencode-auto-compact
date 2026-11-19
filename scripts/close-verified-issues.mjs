@@ -40,6 +40,15 @@ export function parseReportCounts(text) {
 // Sum every row that belongs to the entry. `entry.match` is the same prefix
 // list the triage table uses, so an entry that covers both install roots sums
 // both. Falling back to the exact `project` keeps hand-written entries working.
+// A project can be scanned from two roots: the repo checkout
+// (`shell-tools/repo-updater/repo-updater`) and a bare HOME install
+// (`shell-tools/repo-updater`). Those are the same project, so either side may
+// be the longer path. Comparing at a path boundary keeps `a/b` from matching
+// `a/bc`, which a plain substring test would allow.
+function belongsToRoot(row, pattern) {
+  return row === pattern || row.startsWith(`${pattern}/`) || pattern.startsWith(`${row}/`);
+}
+
 export function errorTotal(entry, counts) {
   const cw = entry.closeWhen ?? {};
   const patterns = (Array.isArray(entry.match) ? entry.match : [entry.match])
@@ -54,7 +63,7 @@ export function errorTotal(entry, counts) {
   const rows = [];
   for (const [name, n] of counts) {
     const normalized = normalizeRow(name);
-    if (patterns.some((p) => normalized.includes(p))) {
+    if (patterns.some((p) => belongsToRoot(normalized, p))) {
       total += n;
       rows.push(name);
     }

@@ -66,6 +66,23 @@ test("errorTotal sums every root that belongs to the entry", () => {
   assert.deepEqual(errorTotal({ closeWhen: { project: "gone/project" } }, counts).total, 0);
 });
 
+test("errorTotal sums a home row when the ledger match is the nested repo path", () => {
+  // Production shape: the ledger entry names the checkout directory while the
+  // HOME install appears as its parent. Substring matching missed the second
+  // root here even though the unit test above passed, because the test used the
+  // shorter parent as `match`.
+  const counts = parseReportCounts(REPORT);
+  const entry = { match: ["shell-tools/repo-updater/repo-updater"] };
+  assert.deepEqual(errorTotal(entry, counts).rows.sort(), [
+    "shell-tools/repo-updater (home)",
+    "shell-tools/repo-updater/repo-updater",
+  ]);
+  assert.equal(errorTotal(entry, counts).total, 663 + 396);
+  // Path-boundary matching: `a/b` must not absorb `a/bc`.
+  const other = parseReportCounts("| shell-tools/repo-updater-extra | 9 | 0 | 1 | 0 | x |\n");
+  assert.equal(errorTotal(entry, other).total, 0);
+});
+
 test("evaluateClosures stays waiting while either root still logs errors", () => {
   const counts = parseReportCounts(REPORT);
   const entries = [
