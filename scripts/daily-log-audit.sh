@@ -46,11 +46,19 @@ if ! flock -n 9; then
 	exit 0
 fi
 
+# Test-mode artifacts are stub-generated evidence lookalikes (32 real ledger ids
+# with fabricated `done` statuses). A crashed test can leave one in issues/,
+# where the triage step would read it as a real transition, so sweep them before
+# the audit rather than trusting the test's own cleanup.
+#
 # Bracketing every run with UTC timestamps is what proves the 06:40 crontab
 # entry actually fired: the audit's own output lines carry no clock, so a manual
 # rerun would otherwise be indistinguishable from the scheduled one.
-printf '%s INFO start audit day=%s\n' "$(date -u +%FT%TZ)" "${STAMP}" >>"${LOG}"
-"${NODE}" "${SCRIPT}" >>"${LOG}" 2>&1
+{
+	"${ROOT}/scripts/cleanup-test-artifacts.sh"
+	printf '%s INFO start audit day=%s\n' "$(date -u +%FT%TZ)" "${STAMP}"
+	"${NODE}" "${SCRIPT}"
+} >>"${LOG}" 2>&1
 status=$?
 printf '%s INFO audit finished rc=%s\n' "$(date -u +%FT%TZ)" "${status}" >>"${LOG}"
 if [[ ${status} -ge 128 ]]; then

@@ -20,9 +20,11 @@ LEDGER="${ROOT}/audit/pending-issues.json"
 if [[ -n "${RAISE_OVERRIDE:-}" ]]; then
 	LOG="${ROOT}/log/issue-status-test.${STAMP}.log"
 	DIGEST="${ROOT}/issues/issue-status-change-TEST-${STAMP}.md"
+	SNAPSHOT="${ROOT}/audit/issue-status-snapshot-TEST.txt"
 else
 	LOG="${ROOT}/log/issue-status.${STAMP}.log"
 	DIGEST="${ROOT}/issues/issue-status-change-${STAMP}.md"
+	SNAPSHOT="${ROOT}/audit/issue-status-snapshot.txt"
 fi
 
 log_line() {
@@ -160,6 +162,20 @@ print("SKIPPED\t" + str(len(rows) - len(real)))
 		exit 0
 	fi
 
+	# A closed issue stays "changed" forever by definition (`status != doing`),
+	# so the previous version rewrote a byte-identical 29-row digest on every
+	# run: issues/ never stayed clean, and each rerun disguised itself as a new
+	# transition. Compare against the last published snapshot (audit/ is
+	# gitignored runtime state) and stay silent when nothing actually moved.
+	# Evidence: the 15:30 run reproduced the 14:22 digest with 0 differing rows.
+	local snapshot="${SNAPSHOT}"
+	local current
+	current="$(printf '%s\n' "${changed[@]}")"
+	if [[ -f "${snapshot}" ]] && [[ "$(<"${snapshot}")" == "${current}" ]]; then
+		log_line info "OK issue status snapshot unchanged (${#changed[@]} non-doing)"
+		exit 0
+	fi
+
 	local tmp
 	tmp="$(mktemp "${DIGEST}.tmp.XXXXXX")" || exit 0
 	if ! write_digest "${tmp}" "${changed[@]}"; then
@@ -171,6 +187,16 @@ print("SKIPPED\t" + str(len(rows) - len(real)))
 	else
 		rm -f "${tmp}"
 		log_line error "FAILED cannot publish digest: ${DIGEST}"
+		exit 0
+	fi
+	local snap_tmp
+	if ! { snap_tmp="$(mktemp "${snapshot}.tmp.XXXXXX")" &&
+		printf '%s\n' "${current}" >"${snap_tmp}" &&
+		mv -f "${snap_tmp}" "${snapshot}"; }; then
+		rm -f "${snap_tmp:-}"
+		# The snapshot only suppresses duplicate digests; losing it costs one
+		# repeated digest on the next run, so this stays informational.
+		log_line info "snapshot update skipped: ${snapshot}"
 	fi
 	exit 0
 }
