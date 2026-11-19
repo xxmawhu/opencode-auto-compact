@@ -348,7 +348,48 @@ function appendRunLog(line) {
   fs.appendFileSync(file, `${line}\n`);
 }
 
-function renderReport({ day, startedAt, sinceMs, scan, groups, recurring, resolved, state, root }) {
+// Per-project change against the previous day, so every report proves on its
+// own whether the reported errors are going away. A project that disappears
+// counts as 0 (eliminated), one that appears counts from 0 (new).
+export function diffProjectCounts(previous = {}, current = {}) {
+  const names = new Set([...Object.keys(previous), ...Object.keys(current)]);
+  return [...names]
+    .map((project) => {
+      const before = previous[project] ?? 0;
+      const after = current[project] ?? 0;
+      return { project, previous: before, current: after, delta: after - before };
+    })
+    .filter((row) => row.delta !== 0)
+    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta) || a.project.localeCompare(b.project));
+}
+
+function renderTrend(lines, trend, display) {
+  if (!trend || trend.length === 0) return;
+  lines.push(`## Change vs ${trend.day}`);
+  lines.push("");
+  lines.push("| project | previous | current | delta |");
+  lines.push("|---|---|---|---|");
+  for (const row of trend.rows) {
+    const sign = row.delta > 0 ? "+" : "";
+    lines.push(
+      `| ${display(row.project)} | ${row.previous} | ${row.current} | ${sign}${row.delta} |`,
+    );
+  }
+  lines.push("");
+}
+
+function renderReport({
+  day,
+  startedAt,
+  sinceMs,
+  scan,
+  groups,
+  recurring,
+  resolved,
+  trend,
+  state,
+  root,
+}) {
   const lines = [];
   const totalErrors = groups.reduce((sum, g) => sum + g.errors, 0);
   const totalWarns = groups.reduce((sum, g) => sum + g.warns, 0);
@@ -379,6 +420,7 @@ function renderReport({ day, startedAt, sinceMs, scan, groups, recurring, resolv
     );
   }
   lines.push("");
+  renderTrend(lines, trend, display);
   if (resolved && resolved.length > 0) {
     lines.push("## Resolved since last run");
     lines.push("");
@@ -540,11 +582,27 @@ export async function run(options = {}) {
   state.firstRun = state.firstRun ?? now.toISOString();
   state.lastRun = now.toISOString();
   state.lastSignatureIds = [...currentIds];
+  const display = (project) =>
+    project.startsWith(`${cfg.root}/`) ? project.slice(cfg.root.length + 1) : project;
+  const currentProjectCounts = Object.fromEntries(
+    projectGroups.map((group) => [display(group.project), group.errors]),
+  );
+  const previousDays = Object.keys(state.days)
+    .filter((key) => key < day)
+    .sort();
+  const previousDay = previousDays.at(-1);
+  const trend = previousDay
+    ? {
+        day: previousDay,
+        rows: diffProjectCounts(state.days[previousDay]?.projects ?? {}, currentProjectCounts),
+      }
+    : null;
   state.days[day] = {
     logDirs: scan.logDirs,
     filesRead: scan.filesRead,
     errorLines: projectGroups.reduce((sum, g) => sum + g.errors, 0),
     projectsWithErrors: projectGroups.length,
+    projects: currentProjectCounts,
   };
   writeFileAtomic(stateFile, `${JSON.stringify(state, null, 2)}\n`);
   writeFileAtomic(
@@ -557,6 +615,7 @@ export async function run(options = {}) {
       groups: projectGroups,
       recurring,
       resolved,
+      trend,
       state,
       root: cfg.root,
     }),

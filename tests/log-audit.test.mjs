@@ -12,6 +12,7 @@ import {
   projectRootOf,
   parseLeadingTimestamp,
   discoverLogDirs,
+  diffProjectCounts,
 } from "../scripts/audit-ai-logs.mjs";
 
 test("classifyLine flags real error shapes", () => {
@@ -173,4 +174,20 @@ test("discoverLogDirs skips .local homes and scripts/log", async () => {
   } finally {
     await fs.promises.rm(tmp, { recursive: true, force: true });
   }
+});
+
+test("diffProjectCounts reports eliminated, new and changed projects", () => {
+  const rows = diffProjectCounts(
+    { "a/proj": 10, "b/proj": 3, "c/proj": 1 },
+    { "a/proj": 4, "b/proj": 3, "d/proj": 2 },
+  );
+  assert.deepEqual(
+    rows.map((row) => [row.project, row.previous, row.current, row.delta]),
+    [
+      ["d/proj", 0, 2, 2],
+      ["c/proj", 1, 0, -1],
+      ["a/proj", 10, 4, -6],
+    ].sort((x, y) => Math.abs(y[3]) - Math.abs(x[3]) || x[0].localeCompare(y[0])),
+  );
+  assert.deepEqual(diffProjectCounts({}, {}), []);
 });
