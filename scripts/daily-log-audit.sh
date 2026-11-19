@@ -17,9 +17,16 @@ STAMP="$(date +%Y%m%d)"
 LOG="${ROOT}/log/log-audit-run.${STAMP}.log"
 
 # A monitoring wrapper that exits 0 on a broken environment is indistinguishable
-# from a healthy run, so every failure path writes a timestamped line first.
+# from a healthy run, so every failure path both logs a timestamped line and
+# drops a digest into ./issues/, which the project monitor turns into a task.
 fail() {
 	printf '%s FAILED %s\n' "$(date -u +%FT%TZ)" "$1" >>"${LOG}"
+	{
+		printf '# 日志巡检执行失败 %s\n\n' "${STAMP}"
+		printf -- '- 失败原因：%s\n' "$1"
+		printf -- '- 运行日志：`log/log-audit-run.%s.log`\n' "${STAMP}"
+		printf -- '- 处置：修复环境后手动重跑 `scripts/daily-log-audit.sh`\n'
+	} >"${ROOT}/issues/log-audit-FAILED-${STAMP}.md" 2>/dev/null
 	exit 0
 }
 
@@ -31,5 +38,9 @@ mkdir -p "${ROOT}/log" "${ROOT}/audit/reports" || exit 0
 cd "${ROOT}" || fail "cannot cd into ${ROOT}"
 
 "${NODE}" "${SCRIPT}" >>"${LOG}" 2>&1
+status=$?
+if [[ ${status} -ne 0 ]]; then
+	fail "audit script exited ${status}"
+fi
 
 exit 0
