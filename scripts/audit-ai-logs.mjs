@@ -25,6 +25,10 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(SCRIPT_DIR, "..");
 
+// The monitoring contract is "at least 30 days"; the report states progress so
+// the requirement can be audited from any single day's file.
+const TARGET_DAYS = 30;
+
 export const DEFAULTS = {
   root: "/mnt/beegfs_data/usr/maxx/dev",
   maxDepth: 4,
@@ -336,6 +340,9 @@ function renderReport({ day, startedAt, sinceMs, scan, groups, recurring, state,
   lines.push(`- run: ${startedAt.toISOString()}`);
   lines.push(`- window since: ${new Date(sinceMs).toISOString()}`);
   lines.push(`- monitored days: ${Object.keys(state.days).length}`);
+  lines.push(
+    `- monitoring progress: ${Object.keys(state.days).length}/30 days (target day: ${TARGET_DAYS} run days, started ${(state.firstRun ?? startedAt.toISOString()).slice(0, 10)})`,
+  );
   lines.push(
     `- log dirs: ${scan.logDirs}, files read: ${scan.filesRead}, files skipped: ${scan.filesSkipped}, stale lines ignored: ${scan.staleMatches}`,
   );
