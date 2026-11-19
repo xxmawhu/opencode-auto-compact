@@ -69,6 +69,27 @@ export const DEFAULTS = {
   // `<proj>/scripts/log` collects one-off build/check script output, not the
   // project's runtime log. Counting it inflates coverage with transient noise.
   skipLogParents: new Set(["scripts"]),
+  // Some projects keep the real runtime log one level below `log/`
+  // (`repo-updater/log/app/gitlab-daemon.log`). Reading only direct children
+  // reported those projects as error-free, which is a blind spot, not a clean
+  // log. Depth 1 means "files strictly inside `log/<one-subdir>/`".
+  logSubdirDepth: 1,
+  // Archive/scratch subdirectories under `log/` hold rotated or test output;
+  // counting them would resurrect defects that already stopped.
+  skipLogSubdirs: new Set([
+    "archive",
+    "history",
+    "history_log",
+    "old",
+    "tmp",
+    "temp",
+    "test",
+    "tests",
+    "nanolog_compressed",
+    "node_modules",
+    ".git",
+    ".var",
+  ]),
   AUTO_ISSUE: false,
   maxIssuesPerRun: 3,
   // Write a daily triage digest into ./issues/ so the project monitor turns the
@@ -264,6 +285,39 @@ export function discoverLogDirs(root, maxDepth, skipDirs, skipLogParents = new S
   };
   walk(root, 1);
   return found;
+}
+
+// Collect the files a `log/` tree holds, descending `depth` levels into
+// subdirectories. A directory that cannot be listed is reported back instead of
+// being silently skipped: the report must never claim coverage that it did not
+// have. A subdirectory that disappears between readdir and stat is a neighbour's
+// test race and is reported separately, same as `run()` does for `log/` itself.
+export async function collectLogFiles(logDir, depth = 0, skipSubdirs = new Set()) {
+  const files = [];
+  const unreadableDirs = [];
+  const vanishedDirs = [];
+  const walk = async (dir, remaining) => {
+    let entries;
+    try {
+      entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    } catch (error) {
+      if (isVanishedDirError(error?.code)) vanishedDirs.push(dir);
+      else unreadableDirs.push(dir);
+      return;
+    }
+    for (const entry of entries) {
+      const child = path.join(dir, entry.name);
+      if (entry.isFile()) {
+        files.push(child);
+        continue;
+      }
+      if (!entry.isDirectory() || remaining <= 0) continue;
+      if (skipSubdirs.has(entry.name)) continue;
+      await walk(child, remaining - 1);
+    }
+  };
+  await walk(logDir, depth);
+  return { files, unreadableDirs, vanishedDirs };
 }
 
 const BINARY_EXT = new Set([
@@ -674,24 +728,14 @@ export async function run(options = {}) {
 
   for (const logDir of logDirs) {
     const project = projectRootOf(logDir);
-    let names = [];
-    try {
-      names = await fs.promises.readdir(logDir, { withFileTypes: true });
-    } catch (error) {
-      // A dir that disappeared between enumeration and readdir (another
-      // project's test run creating and removing one) is not a blind spot;
-      // counting it would put a false "errors NOT audited" line in the daily
-      // report every time a neighbour's tests race with the scan.
-      if (isVanishedDirError(error?.code)) {
-        scan.vanishedDirs.push(logDir);
-        continue;
-      }
-      scan.unreadableDirs.push(logDir);
-      continue;
-    }
-    for (const entry of names) {
-      if (!entry.isFile()) continue;
-      const file = path.join(logDir, entry.name);
+    const collected = await collectLogFiles(
+      logDir,
+      cfg.logSubdirDepth ?? 0,
+      cfg.skipLogSubdirs ?? new Set(),
+    );
+    scan.unreadableDirs.push(...collected.unreadableDirs);
+    scan.vanishedDirs.push(...collected.vanishedDirs);
+    for (const file of collected.files) {
       const result = await scanFile(file, sinceMs, cfg, ({ lineNo, level, text }) => {
         const group = groups.get(project) ?? {
           project,

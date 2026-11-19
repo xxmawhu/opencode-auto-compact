@@ -12,6 +12,7 @@ import {
   parseLeadingTimestamp,
   parseJsonTimestamp,
   discoverLogDirs,
+  collectLogFiles,
   diffProjectCounts,
   findUntriagedProjects,
   summarizePendingIssues,
@@ -257,6 +258,58 @@ test("discoverLogDirs skips .local homes and scripts/log", async () => {
     );
   } finally {
     await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("collectLogFiles descends one level and skips archive subdirs", async () => {
+  const tmp = makeFixtureDir("audit-nested");
+  try {
+    await fs.promises.mkdir(path.join(tmp, "log", "app"), { recursive: true });
+    await fs.promises.mkdir(path.join(tmp, "log", "archive"), { recursive: true });
+    await fs.promises.writeFile(path.join(tmp, "log", "direct.log"), "ERROR direct\n");
+    await fs.promises.writeFile(path.join(tmp, "log", "app", "nested.log"), "ERROR nested\n");
+    await fs.promises.writeFile(path.join(tmp, "log", "archive", "old.log"), "ERROR old\n");
+
+    const collected = await collectLogFiles(path.join(tmp, "log"), 1, new Set(["archive"]));
+    assert.deepEqual(collected.files.map((file) => path.relative(tmp, file)).sort(), [
+      path.join("log", "app", "nested.log"),
+      path.join("log", "direct.log"),
+    ]);
+    assert.deepEqual(collected.unreadableDirs, []);
+    assert.deepEqual(collected.vanishedDirs, []);
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("run() counts errors in a log subdirectory", async () => {
+  const dirname = path.dirname(new URL(import.meta.url).pathname);
+  const root = fs.mkdtempSync(path.join(dirname, ".tmp-nested-"));
+  const opts = {
+    roots: [path.join(root, "group", "proj")],
+    auditDir: path.join(root, "audit"),
+    issuesDir: path.join(root, "issues"),
+    logDir: path.join(root, "runlog"),
+    windowHours: 24,
+    writeIssueDigest: false,
+    now: new Date("2026-11-19T09:00:00Z"),
+  };
+  try {
+    const logDir = path.join(root, "group", "proj", "log", "app");
+    await fs.promises.mkdir(logDir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(logDir, "daemon.log"),
+      "2026-11-19T08:00:00Z ERROR boom from nested dir\n",
+    );
+    const result = await run(opts);
+    assert.equal(result.groups.length, 1);
+    assert.equal(result.groups[0].errors, 1);
+    assert.ok(
+      result.groups[0].samples[0].includes(path.join("log", "app", "daemon.log")),
+      result.groups[0].samples[0],
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
   }
 });
 
