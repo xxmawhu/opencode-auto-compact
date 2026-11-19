@@ -97,9 +97,22 @@ for row in json.load(open(sys.argv[1])):
 		id="${ids[$i]}"
 		replied="-"
 		status="unreachable"
-		local out
-		out="$("${raise}" status "${id}" 2>&1)" || true
-		if printf '%s\n' "${out}" | grep -q '^issue_id:'; then
+		local out attempt
+		# Retry once: the ZMQ server behind raise-issue occasionally fails a single
+		# query under cron load (2026-11-19 09:20 run reported all 14 issues as
+		# unreachable while a manual run at 09:23 succeeded). Without the retry a
+		# transient miss writes a false "all changed" digest into issues/.
+		# Loop bound is the literal set {1,2}: two attempts, then report and move on.
+		for attempt in 1 2; do
+			out="$("${raise}" status "${id}" 2>&1)" || true
+			if printf '%s\n' "${out}" | rg -q '^issue_id:'; then
+				break
+			fi
+			if [[ "${attempt}" -eq 1 ]]; then
+				sleep 2
+			fi
+		done
+		if printf '%s\n' "${out}" | rg -q '^issue_id:'; then
 			status="$(printf '%s\n' "${out}" | awk '/^status:/{print $2; exit}')"
 			replied="$(printf '%s\n' "${out}" | awk '/^replied_at:/{print $2; exit}')"
 			[[ -n "${status}" ]] || status="unknown"
