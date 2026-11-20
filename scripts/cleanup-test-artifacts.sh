@@ -26,6 +26,7 @@ mkdir -p "${ROOT}/log" || exit 0
 shopt -s nullglob
 leftovers=(
 	"${ROOT}"/issues/issue-status-change-TEST-*.md
+	"${ROOT}"/audit/issue-status-change-TEST-*.md
 	"${ROOT}"/audit/issue-status-snapshot-TEST*.txt
 )
 shopt -u nullglob

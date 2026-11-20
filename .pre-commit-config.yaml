@@ -55,7 +55,10 @@ repos:
     hooks:
       - id: shellcheck
         name: shellcheck
-        entry: shellcheck -e SC2016
+        # Absolute path: shellcheck ships only in the platform conda prefix and
+        # git-hook PATHs often omit it (same PATH defect as the pre-commit
+        # binary; 2026-11-20 shellcheck hook failed the whole commit).
+        entry: /opt/miniconda3/bin/shellcheck -e SC2016
         language: system
         types: [shell]
         stages: [pre-commit]

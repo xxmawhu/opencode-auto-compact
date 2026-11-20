@@ -21,7 +21,9 @@ const ROOT = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "..");
 const SCRIPT = path.join(ROOT, "scripts", "check-issue-status.sh");
 const stamp = new Date().toISOString().slice(0, 10).replaceAll("-", "");
 const LOG = path.join(ROOT, "log", `issue-status-test.${stamp}.log`);
-const DIGEST = path.join(ROOT, "issues", `issue-status-change-TEST-${stamp}.md`);
+// TEST digests live under audit/, never issues/: a leftover in issues/ would be
+// read by the triage loop as a real backlog item (2026-11-20).
+const DIGEST = path.join(ROOT, "audit", `issue-status-change-TEST-${stamp}.md`);
 const SNAPSHOT = path.join(ROOT, "audit", "issue-status-snapshot-TEST.txt");
 
 function removeArtifacts() {
@@ -64,6 +66,10 @@ test("an unchanged status snapshot publishes no second digest", () => {
     assert.ok(fs.existsSync(DIGEST), "first run publishes a digest");
     const digestBefore = fs.readFileSync(DIGEST, "utf8");
     assert.ok(digestBefore.length > 0);
+    // The TEST digest must not point at the production log: naming the wrong
+    // file makes a stubbed statuses table look like a real transition.
+    assert.match(digestBefore, new RegExp(`issue-status-test\\.${stamp}\\.log`));
+    assert.doesNotMatch(digestBefore, new RegExp(`issue-status\\.${stamp}\\.log`));
     const logBefore = fs.readFileSync(LOG, "utf8");
 
     const second = runScript(stub);

@@ -138,6 +138,10 @@ const NOISE_PATTERNS = [
   // Verification output states its outcome explicitly: `[PASS] ... 无 LoadError`
   // names an exception class as an assertion target, not as a failure.
   /\[PASS\]/,
+  // A report section banner that quotes the level it looked for, not a record at
+  // that level. Real sample (live-ops/ana-daily-error):
+  //   --- MATCH lines WITHOUT 'ERROR' (旧探针盲区) ---
+  /\bMATCH lines WITHOUT\s+['"](?:ERROR|WARN(?:ING)?)['"]/i,
   // Lint advice lines ("help: Replace ...").
   /^help:\s/,
   // Verification scripts record their own outcome as `key: value` metadata, and

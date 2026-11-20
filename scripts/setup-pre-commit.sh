@@ -8,7 +8,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 LOG_DIR="${SCRIPT_DIR}/log"
 LOG_FILE="${LOG_DIR}/setup-pre-commit.$(date +%Y%m%d).log"
-readonly SCRIPT_DIR LOG_DIR LOG_FILE
+PLATFORM_PYTHON="/opt/miniconda3/bin/python3"
+readonly SCRIPT_DIR LOG_DIR LOG_FILE PLATFORM_PYTHON
 
 mkdir -p -- "${LOG_DIR}"
 
@@ -38,32 +39,59 @@ die() {
 	exit 1
 }
 
+# Resolve the pre-commit entry point once, so every later call uses one backend.
+#
+# A git-hook context often has a PATH without ~/.local/bin, which is how this
+# repository produced `pre-commit is not installed or not on PATH` on 2026-11-19
+# and 2026-11-20. The platform ships the same tool as a Python module, so a
+# missing PATH binary is an environment detail, not a reason to abort.
+# Degradation is explicit: the resolved backend is logged, and both backends
+# register byte-identical hooks, so refusing to fall back would fail the job for
+# no benefit. Reported to cqp-2611 and db_api on 2026-11-20 as the same defect.
+resolve_backend() {
+	local path_bin
+	if path_bin="$(command -v pre-commit 2>/dev/null)" && [[ -n "${path_bin}" ]]; then
+		BACKEND=("${path_bin}")
+		BACKEND_DESC="path:${path_bin}"
+		return 0
+	fi
+	if [[ -x "${PLATFORM_PYTHON}" ]] &&
+		"${PLATFORM_PYTHON}" -m pre_commit --version >/dev/null 2>&1; then
+		BACKEND=("${PLATFORM_PYTHON}" -m pre_commit)
+		BACKEND_DESC="module:${PLATFORM_PYTHON} -m pre_commit"
+		return 0
+	fi
+	return 1
+}
+
 main() {
 	log info "stage:check-pre-commit begin"
 
-	if ! command -v pre-commit >/dev/null 2>&1; then
-		die "pre-commit is not installed or not on PATH"
+	BACKEND=()
+	BACKEND_DESC=""
+	if ! resolve_backend; then
+		die "no pre-commit backend: PATH lookup failed and ${PLATFORM_PYTHON} -m pre_commit unusable"
 	fi
-	log info "found pre-commit: $(command -v pre-commit)"
+	log info "pre-commit backend: ${BACKEND_DESC}"
 
 	if [[ ! -f "${SCRIPT_DIR}/.pre-commit-config.yaml" ]]; then
 		die ".pre-commit-config.yaml is missing"
 	fi
 
 	log info "stage:install-hooks begin"
-	if ! pre-commit install >>"${LOG_FILE}" 2>&1; then
-		die "pre-commit install failed"
+	if ! "${BACKEND[@]}" install >>"${LOG_FILE}" 2>&1; then
+		die "pre-commit install failed (backend=${BACKEND_DESC})"
 	fi
-	log pass "pre-commit install finished"
+	log pass "pre-commit install finished (backend=${BACKEND_DESC})"
 
-	if ! pre-commit install --hook-type post-merge >>"${LOG_FILE}" 2>&1; then
-		die "pre-commit install --hook-type post-merge failed"
+	if ! "${BACKEND[@]}" install --hook-type post-merge >>"${LOG_FILE}" 2>&1; then
+		die "pre-commit install --hook-type post-merge failed (backend=${BACKEND_DESC})"
 	fi
-	log pass "post-merge hook installed"
+	log pass "post-merge hook installed (backend=${BACKEND_DESC})"
 
 	log info "stage:verify begin"
-	[[ -f "${SCRIPT_DIR}/.git/hooks/pre-commit" ]] || die "missing .git/hooks/pre-commit"
-	[[ -f "${SCRIPT_DIR}/.git/hooks/post-merge" ]] || die "missing .git/hooks/post-merge"
+	[[ -x "${SCRIPT_DIR}/.git/hooks/pre-commit" ]] || die "missing or non-executable .git/hooks/pre-commit"
+	[[ -x "${SCRIPT_DIR}/.git/hooks/post-merge" ]] || die "missing or non-executable .git/hooks/post-merge"
 	has_precommit_marker "${SCRIPT_DIR}/.git/hooks/pre-commit" ||
 		die ".git/hooks/pre-commit is not managed by pre-commit"
 	log pass "hooks verified"

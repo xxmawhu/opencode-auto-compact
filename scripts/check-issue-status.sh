@@ -17,9 +17,13 @@ LEDGER="${ROOT}/audit/pending-issues.json"
 # A status snapshot is evidence, so a stubbed CLI must never be able to write a
 # production-looking digest. Tests inject RAISE_OVERRIDE; that mode gets TEST
 # in every artifact name, making it impossible to mistake for a real change.
+# The TEST digest lives in audit/, not issues/: any *.md in issues/ is a backlog
+# item for the triage loop, so a crashed test must not be able to leave a fake
+# transition there (2026-11-20: the owner mistook a leftover TEST digest for a
+# real issue).
 if [[ -n "${RAISE_OVERRIDE:-}" ]]; then
 	LOG="${ROOT}/log/issue-status-test.${STAMP}.log"
-	DIGEST="${ROOT}/issues/issue-status-change-TEST-${STAMP}.md"
+	DIGEST="${ROOT}/audit/issue-status-change-TEST-${STAMP}.md"
 	SNAPSHOT="${ROOT}/audit/issue-status-snapshot-TEST.txt"
 else
 	LOG="${ROOT}/log/issue-status.${STAMP}.log"
@@ -55,7 +59,9 @@ write_digest() {
 		if [[ -n "${RAISE_OVERRIDE:-}" ]]; then
 			printf '> 模式：TEST（注入桩 CLI，表中状态为伪造值，**不可作为修复证据**）\n\n'
 		fi
-		printf -- '- 快照日志：`log/issue-status.%s.log`\n' "${STAMP}"
+		# Print the log actually used by this run: a TEST digest that names the
+		# production log invites a reader to cross-check the wrong file.
+		printf -- '- 快照日志：`%s`\n' "${LOG#"${ROOT}"/}"
 		printf -- '- 台账：`audit/pending-issues.json`\n\n'
 		printf '| issue | target | status | replied_at |\n|---|---|---|---|\n'
 		printf '%s\n' "${lines[@]}"

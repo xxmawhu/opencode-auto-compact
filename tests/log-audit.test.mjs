@@ -107,6 +107,8 @@ test("classifyLine drops pass verdicts and zero counters", () => {
     // Chinese summary labels sit between the keyword and the colon.
     "- ERROR 行: 0 条, 归组 0 类",
     "- ERROR 行数: 0",
+    // Report banner that quotes the level it searched for (ana-daily-error).
+    "--- MATCH lines WITHOUT 'ERROR' (旧探针盲区) ---",
   ];
   for (const line of noise) assert.equal(classifyLine(line), null, `expected noise: ${line}`);
   // Nonzero counters and real failures still count.
