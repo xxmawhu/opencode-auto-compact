@@ -148,6 +148,30 @@ test("classifyLine does not count mentions of the level in outcome metadata", ()
   assert.equal(classifyLine("ERROR: pre-commit not found in PATH"), "error");
 });
 
+test("classifyLine drops report table rows and PASS outcome lines", () => {
+  // Real samples from the 2026-11-20 13:00 audit run. Both are records about
+  // outcomes or aggregates, and the exception/level word inside them is a
+  // category label:
+  //   spike/spike-event-census build-availability: 2 aggregate rows
+  //   opencode-issue-trigger verify-issues-confirm: 3 outcome rows
+  const noise = [
+    "│ bybit    ┆ trade_read_error:ValueError ┆ 1398   ┆ 6         │",
+    "│ trade ┆ binance  ┆ OSError ┆ 1       │",
+    "├──────────┼───────────┤",
+    "PASS: 只读配置目录失败时日志记录了 ERROR 原因",
+    "PASS: 非法路径输入返回 ValueError 而非抛出",
+  ];
+  for (const line of noise) assert.equal(classifyLine(line), null, `expected noise: ${line}`);
+  // A record that starts with a timestamp and uses ASCII pipes as its level
+  // column is still a real failure record.
+  assert.equal(
+    classifyLine("2026-11-19 13:00:17.981 +00:00 | ERROR | __main__:check_doorbell:116 - STALE"),
+    "error",
+  );
+  // A table header row alone must not hide a genuine comma-separated failure.
+  assert.equal(classifyLine("row 3: ValueError: bad axis"), "error");
+});
+
 test("classifyLine judges structured records by declared level/status", () => {
   const pass = JSON.stringify({ status: "PASS", checks: [{ expected: "日志含 ERROR 级别" }] });
   assert.equal(classifyLine(pass), null);

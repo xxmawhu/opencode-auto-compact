@@ -161,6 +161,19 @@ const NOISE_PATTERNS = [
   // Restricted to ... REPORT/SUMMARY titles so an uppercase failure line such
   // as "FATAL ERROR" still counts.
   /^[A-Z][A-Z ]*(?:REPORT|SUMMARY)$/,
+  // Box-drawing table rows are report aggregates, not failure records. Real
+  // sample (spike/spike-event-census build-availability, 2 rows/day):
+  //   │ bybit    ┆ trade_read_error:ValueError ┆ 1398   ┆ 6         │
+  // The row counts exceptions per exchange; its `ValueError` named a category,
+  // yet the exception-class pattern counted the row as one more error. Only
+  // box-drawing leaders are treated this way: an ASCII `| TS | ERROR |` record
+  // starts with the timestamp and stays countable.
+  /^\s*[│┆┌└├┏┗┣]/,
+  // A verification script states its own successful outcome as `PASS: ...`, and
+  // the wording may name the level it asserted. Real sample
+  // (opencode-issue-trigger verify-issues-confirm, 3 rows):
+  //   PASS: 只读配置目录失败时日志记录了 ERROR 原因
+  /^\s*PASS\s*[:：]/,
 ];
 
 export function isNoise(line) {
