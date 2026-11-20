@@ -62,8 +62,25 @@ bash install.sh --uninstall
 ## 验证
 
 1. 重启 OpenCode。
-2. 打开 `opencode debug info`，`plugins:` 列表中 `opencode-auto-compact` 只出现一个入口文件。
-3. 启动日志中 `failed to load plugin` 为 0，插件只产生一次压缩。
+2. 确认扫描目录只有一个入口文件：
+
+   ```sh
+   ls "${XDG_CONFIG_HOME:-$HOME/.config}/opencode/plugin/opencode-auto-compact.ts"
+   ```
+
+   v1 还可在 `opencode debug info` 的 `plugins:` 列表中核对。v2 已移除 `debug info` 子命令，
+   改按第 3 步的运行记录核对；`opencode plugin list` 依赖后台服务，不作为判据。
+
+3. 查看运行记录，每次启动新增一行 `auto-compact runtime activated`，`entry` 标注本次宿主代次：
+
+   ```sh
+   grep -c '"message":"auto-compact runtime activated"' \
+     "${XDG_STATE_HOME:-$HOME/.local/state}/opencode-auto-compact/auto-compact.log"
+   ```
+
+   重启前后计数相差 1 表示入口只加载一次；同一次启动出现两行表示入口被重复加载。
+   v1 启动日志中的 `failed to load plugin` 应为 0。
+
 4. 让任一长会话的上下文超过 200000 token，结束当前回合。多轮读不同内容才能累积上下文；
    反复读同一文件会被宿主去重，每轮增量只有数百 token。
 5. 会话空闲后自动压缩，无需手动操作。
