@@ -327,6 +327,17 @@ function makeFixtureDir(prefix) {
   return fs.mkdtempSync(path.join(dirname, `.tmp-${prefix}-`));
 }
 
+// Local-time stamp in the project log format. Fixtures that must fall inside the
+// scan window use an offset from `Date.now()`; a hardcoded date silently falls
+// out of the rolling 24h window and turns the assertion into a calendar test.
+function localStamp(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  );
+}
+
 test("discoverLogDirs reaches depth-6 project logs", async () => {
   const tmp = makeFixtureDir("audit-depth");
   try {
@@ -408,7 +419,10 @@ test("scanFile skips an undated archive copy but keeps a dated live log", async 
     // Same archive-looking name, but the project logs live with timestamps:
     // `check-hft-restapi-history` writes exactly this shape every day.
     const live = path.join(dir, "check-history-contract-test.log");
-    await fs.promises.writeFile(live, "2026-11-19 10:00:00 | ERROR    | contract mismatch\n");
+    await fs.promises.writeFile(
+      live,
+      `${localStamp(new Date(Date.now() - 60 * 60 * 1000))} | ERROR    | contract mismatch\n`,
+    );
     const seen = [];
     const liveResult = await scanFile(live, since, limits, (m) => seen.push(m.text));
     assert.equal(liveResult.matches, 1);
