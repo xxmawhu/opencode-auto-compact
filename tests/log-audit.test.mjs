@@ -535,6 +535,35 @@ test("scanFile does not let warnings consume the error cap", async () => {
   }
 });
 
+test("scanFile reads hourly and extensionless log names", async () => {
+  const tmp = makeFixtureDir("audit-hourly-names");
+  try {
+    const dir = path.join(tmp, "log");
+    await fs.promises.mkdir(dir, { recursive: true });
+    const now = new Date(Date.now() - 60_000);
+    const when =
+      `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")} ` +
+      `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:${String(now.getSeconds()).padStart(2, "0")}`;
+    const limits = { maxFileBytes: 10 * 1024 * 1024, maxMatchesPerFile: 5 };
+    // Projects rotate to an hour-suffixed name (`*.YYYYMMDDTHH.log`) or keep a
+    // period-suffixed name with no extension (`*.YYYYMMDD`). The audit keys on
+    // `log/` membership and mtime, so both must be read; a name filter would
+    // silently drop a project's whole error stream.
+    for (const name of ["daily.20261120T13.log", "daily.20261120"]) {
+      const file = path.join(dir, name);
+      await fs.promises.writeFile(file, `${when} | ERROR | budget exhausted on /home\n`);
+      const seen = [];
+      const result = await scanFile(file, Date.now() - 24 * 3600 * 1000, limits, (m) =>
+        seen.push(m.level),
+      );
+      assert.deepEqual(seen, ["error"], name);
+      assert.equal(result.skipped, undefined, name);
+    }
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("isArchiveFileName only matches standalone archive tokens", () => {
   const archived = [
     "cron.log.20261119_history_modules",
