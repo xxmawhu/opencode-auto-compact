@@ -26,13 +26,26 @@ export function normalizeRow(name) {
   return normalizeProjectName(withoutRoot);
 }
 
-// Only the "Projects with error lines" table has `<name> | <digits> |` as its
-// first two cells; the pending/resolved tables start with an id or a signature.
+// Only the "Projects with error lines" table has six columns with `<name>` and
+// `<digits>` as its first two cells. Matching on the first two cells alone was
+// not enough: the "Change vs <day>" table also starts with `<name> | <digits> |`
+// but its second cell is the PREVIOUS window's count. Grading it closed
+// `change-file-mod` on a stale 1 while today's report had no row (2026-11-21 13:00),
+// and would have closed an entry whose previous count was 0 while the current
+// window still logged errors. A minimum column count (a `|` inside the sample
+// signature only adds cells) keeps the change table (4 columns) and the resolved
+// table (5 columns, signature second) out.
+const ERROR_TABLE_CELLS = 8; // leading + 6 columns + trailing pipe split by "|"
+
 export function parseReportCounts(text) {
   const counts = new Map();
   for (const line of String(text ?? "").split("\n")) {
-    const m = /^\| ([^|]+?) \| (\d+) \|/.exec(line);
-    if (m) counts.set(m[1].trim(), Number(m[2]));
+    const cells = line.split("|");
+    if (cells.length < ERROR_TABLE_CELLS) continue;
+    const name = cells[1].trim();
+    const errors = cells[2].trim();
+    if (name === "" || !/^\d+$/.test(errors)) continue;
+    counts.set(name, Number(errors));
   }
   return counts;
 }

@@ -42,6 +42,29 @@ test("parseReportCounts reads only the error table", () => {
   assert.equal(counts.has("agents-tools/plugin/opencode-auto-compact"), false);
 });
 
+test("parseReportCounts ignores the change table's previous-window counts", () => {
+  // 2026-11-21 production: a project fixed today appears as
+  // `| proj | 1 | 0 | -1 |` (previous=1, current=0). The old first-two-cells
+  // regex read 1 as today's count and blocked the close; a project broken today
+  // appears as `| proj | 0 | 87 | +87 |`, which it read as 0 and would have
+  // closed while 87 lines were current.
+  const report = `| project | error lines | warn lines | files | new signatures | top signature |
+|---|---|---|---|---|
+| a/live | 3 | 4 | 1 | 0 | boom |
+
+## Change vs 20261120
+
+| project | previous | current | delta |
+|---|---|---|---|
+| a/fixed | 1 | 0 | -1 |
+| b/broken | 0 | 87 | +87 |
+`;
+  const counts = parseReportCounts(report);
+  assert.equal(counts.get("a/live"), 3);
+  assert.equal(counts.has("a/fixed"), false);
+  assert.equal(counts.has("b/broken"), false);
+});
+
 test("normalizeRow strips the home marker and the audit root", () => {
   assert.equal(normalizeRow("shell-tools/repo-updater (home)"), "shell-tools/repo-updater");
   assert.equal(
