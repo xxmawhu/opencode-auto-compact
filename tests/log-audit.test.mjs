@@ -502,6 +502,116 @@ test("scanFile dates an undated head block by the first timestamp", async () => 
   }
 });
 
+test("scanFile parks an oversized undated head until the first timestamp decides", async () => {
+  const tmp = makeFixtureDir("audit-head-overflow");
+  try {
+    const dir = path.join(tmp, "log", "qa");
+    await fs.promises.mkdir(dir, { recursive: true });
+    const limits = { maxFileBytes: 10 * 1024 * 1024, maxMatchesPerFile: 500 };
+    const since = Date.now() - 24 * 3600 * 1000;
+    const lines = [];
+    // Real shape (check-funding_rate_api/log/qa/cron.log): 15488 undated lines,
+    // 3872 of them `ModuleNotFoundError`, ahead of the first timestamp. Hitting
+    // the per-file cap used to break the read loop before that timestamp, so the
+    // whole stale head was counted as current — exactly 500 phantom error lines.
+    for (let i = 0; i < 700; i += 1) {
+      lines.push(
+        i % 2 === 0
+          ? "Traceback (most recent call last):"
+          : "ModuleNotFoundError: No module named 'pandas'",
+      );
+    }
+    const aged = path.join(dir, "cron.log");
+    await fs.promises.writeFile(aged, `${lines.join("\n")}\n2026-05-01 08:00:00 cron run start\n`);
+    const seen = [];
+    const result = await scanFile(aged, since, limits, (m) => seen.push(m));
+    assert.equal(seen.length, 0, "an oversized stale head must not be reported");
+    assert.equal(result.matches, 0);
+    assert.ok(result.stale >= limits.maxMatchesPerFile, "the parked head is counted as stale");
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("scanFile still caps a log that never stamps its lines", async () => {
+  const tmp = makeFixtureDir("audit-head-undated");
+  try {
+    const dir = path.join(tmp, "log", "app");
+    await fs.promises.mkdir(dir, { recursive: true });
+    const limits = { maxFileBytes: 10 * 1024 * 1024, maxMatchesPerFile: 500 };
+    const file = path.join(dir, "app.log");
+    // No timestamp anywhere: mtime is the only clock, and hiding the file would
+    // be a coverage blind spot. The cap keeps memory bounded, so 500 is the
+    // documented ceiling rather than a silent drop.
+    await fs.promises.writeFile(
+      file,
+      `${Array.from({ length: 700 }, () => "ModuleNotFoundError: No module named 'x'").join("\n")}\n`,
+    );
+    const seen = [];
+    const result = await scanFile(file, Date.now() - 24 * 3600 * 1000, limits, (m) => seen.push(m));
+    assert.equal(seen.length, limits.maxMatchesPerFile);
+    assert.equal(result.capped, true);
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
+test("scanFile keeps a traceback at its record's declared level", async () => {
+  const tmp = makeFixtureDir("audit-traceback-level");
+  try {
+    const dir = path.join(tmp, "log", "cron");
+    await fs.promises.mkdir(dir, { recursive: true });
+    const when = localStamp(new Date(Date.now() - 60_000));
+    const file = path.join(dir, "batch-update.log");
+    // Real shape (repo-updater, 3 days of phantom errors): the warning record
+    // announces a tolerated degradation and its traceback names the missing
+    // module. The exception frame carries no level, so keyword matching alone
+    // counted it as an error even though the record was warning-level.
+    await fs.promises.writeFile(
+      file,
+      [
+        `${when} | WARNING  | repo_api.notify:_send_via_tg_cli:95 - Degraded, tg_msg CLI fallback failed (1): Traceback (most recent call last):`,
+        '  File "/mnt/beegfs_data/usr/maxx/dev/shell-tools/repo-updater/.local/bin/tg_msg", line 5, in <module>',
+        "    from tgmsg.cli import main",
+        "ModuleNotFoundError: No module named 'tgmsg'",
+        `${when} | INFO     | replaying yesterday: Traceback (most recent call last):`,
+        "ValueError: an old error being echoed",
+        `${when} | ERROR    | real failure`,
+        "Traceback (most recent call last):",
+        '  File "/mnt/beegfs_data/usr/maxx/dev/project/main.py", line 1, in <module>',
+        "KeyError: 'trade_date'",
+        "",
+        `${when} | ERROR    | later single-line failure`,
+        "",
+      ].join("\n"),
+    );
+    const limits = { maxFileBytes: 10 * 1024 * 1024, maxMatchesPerFile: 500 };
+    const errors = [];
+    const warns = [];
+    await scanFile(file, Date.now() - 24 * 3600 * 1000, limits, (m) => {
+      if (m.level === "error") errors.push(m.text);
+      else warns.push(m.text);
+    });
+    assert.equal(
+      errors.length,
+      4,
+      "ERROR header, its Traceback banner, its exception frame, and the later failure",
+    );
+    assert.ok(errors.some((text) => text.includes("real failure")));
+    assert.ok(errors.some((text) => text.includes("KeyError")));
+    assert.ok(errors.some((text) => text.includes("later single-line failure")));
+    assert.equal(warns.length, 2, "the warning header and its exception frame stay warnings");
+    assert.ok(warns.some((text) => text.includes("Degraded")));
+    assert.ok(warns.some((text) => text.includes("ModuleNotFoundError")));
+    assert.ok(
+      !errors.some((text) => text.includes("ValueError")),
+      "an INFO replay's traceback is not a failure",
+    );
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("scanFile does not let warnings consume the error cap", async () => {
   const tmp = makeFixtureDir("audit-warn-cap");
   try {

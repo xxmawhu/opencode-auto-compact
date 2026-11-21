@@ -35,11 +35,15 @@ function removeArtifacts() {
 function writeStubStable(dir) {
   // Every UUID id reports `done`, so the change set is non-empty and the first
   // run has a digest to publish; the second run must then see no movement.
+  // The stub also records its working directory: raise-issue derives the caller
+  // project from cwd, and a cron run without a cd was denied for every id
+  // (STATUS DENIED: caller .../scripts). Each query must run from the project root.
   const stub = path.join(dir, "raise-issue");
   fs.writeFileSync(
     stub,
     [
       "#!/bin/bash",
+      'printf "%s\\n" "$PWD" >> "$STATUS_CWD_LOG"',
       `printf 'issue_id:         %s\\nstatus:           done\\nreplied_at:       2026-11-19T00:00:00Z\\n' "$2"`,
       "",
     ].join("\n"),
@@ -48,10 +52,10 @@ function writeStubStable(dir) {
   return stub;
 }
 
-function runScript(stub) {
+function runScript(stub, cwdLog) {
   return spawnSync("bash", [SCRIPT], {
     encoding: "utf8",
-    env: { ...process.env, RAISE_OVERRIDE: stub },
+    env: { ...process.env, RAISE_OVERRIDE: stub, STATUS_CWD_LOG: cwdLog },
   });
 }
 
@@ -60,9 +64,17 @@ test("an unchanged status snapshot publishes no second digest", () => {
   const tmp = fs.mkdtempSync(path.join(ROOT, "tests", ".tmp-issue-status-"));
   try {
     const stub = writeStubStable(tmp);
+    const cwdLog = path.join(tmp, "stub-cwd.log");
 
-    const first = runScript(stub);
+    const first = runScript(stub, cwdLog);
     assert.equal(first.status, 0, first.stderr);
+    const queriedFrom = fs.readFileSync(cwdLog, "utf8").trim().split("\n");
+    assert.ok(queriedFrom.length > 0, "the stub records every status query");
+    assert.deepEqual(
+      [...new Set(queriedFrom)],
+      [ROOT],
+      "every status query runs from the project root (raise-issue caller identity)",
+    );
     assert.ok(fs.existsSync(DIGEST), "first run publishes a digest");
     const digestBefore = fs.readFileSync(DIGEST, "utf8");
     assert.ok(digestBefore.length > 0);
@@ -72,7 +84,7 @@ test("an unchanged status snapshot publishes no second digest", () => {
     assert.doesNotMatch(digestBefore, new RegExp(`issue-status\\.${stamp}\\.log`));
     const logBefore = fs.readFileSync(LOG, "utf8");
 
-    const second = runScript(stub);
+    const second = runScript(stub, cwdLog);
     assert.equal(second.status, 0, second.stderr);
     const added = fs.readFileSync(LOG, "utf8").slice(logBefore.length);
     assert.match(added, /OK issue status snapshot unchanged/);

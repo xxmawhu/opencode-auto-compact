@@ -132,7 +132,12 @@ print("SKIPPED\t" + str(len(rows) - len(real)))
 		# transient miss writes a false "all changed" digest into issues/.
 		# Loop bound is the literal set {1,2}: two attempts, then report and move on.
 		for attempt in 1 2; do
-			out="$("${raise}" status "${id}" 2>&1)" || true
+			# `raise-issue` derives the caller project from the working directory.
+			# Cron runs this script without a cd, so the CLI saw `.../scripts` and
+			# answered `STATUS DENIED: caller .../scripts is neither receiver nor
+			# sender` for every id (2026-11-20 09:20: 40/40 unreachable). Run from
+			# the project root so the caller is the registered sender project.
+			out="$(cd "${ROOT}" && "${raise}" status "${id}" 2>&1)" || true
 			if printf '%s\n' "${out}" | rg -q '^issue_id:'; then
 				break
 			fi

@@ -222,6 +222,44 @@ const BRACKET_LEVEL =
 // eslint-disable-next-line no-control-regex -- ESC is the whole point of this pattern
 const ANSI_ESCAPE = /\x1b\[[0-9;]*[A-Za-z]/g;
 
+// Severity a record declares about itself (level column, bracket level, or JSON
+// level). `classifyLine` already applies this precedence, but `scanFile` needs
+// the declared level separately: traceback continuation lines carry no level of
+// their own, and judging them only by exception-class keywords counted a
+// warning's traceback as an error for three days (repo-updater: `WARNING |
+// Degraded, tg_msg CLI fallback failed` followed by `ModuleNotFoundError`).
+export function declaredLevel(line) {
+  const trimmed = String(line ?? "")
+    .replace(ANSI_ESCAPE, "")
+    .trim();
+  if (!trimmed) return null;
+  const fieldMatch = LEVEL_FIELD.exec(trimmed);
+  if (fieldMatch) return fieldMatch[1].toUpperCase();
+  const bracketMatch = BRACKET_LEVEL.exec(trimmed);
+  if (bracketMatch) return bracketMatch[1].toUpperCase();
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    try {
+      const record = JSON.parse(trimmed);
+      const level = String(record.level ?? record.severity ?? "").toUpperCase();
+      if (/^(TRACE|DEBUG|INFO|SUCCESS|WARNING|WARN|ERROR|CRITICAL|FATAL)$/.test(level)) {
+        return level;
+      }
+    } catch {
+      // Not JSON after all: no declared level.
+    }
+  }
+  return null;
+}
+
+// Lines that belong to the record above them: indented traceback frames, the
+// `Traceback` banner, or an exception line at column 0.
+const CONTINUATION_LINE =
+  /^(?:\s+|Traceback \(most recent call last\):|[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Interrupt|Warning|Exit|ExitCode)\b[:(])/;
+
+export function isContinuationLine(line) {
+  return CONTINUATION_LINE.test(String(line ?? ""));
+}
+
 export function classifyLine(line) {
   const text = String(line ?? "").replace(ANSI_ESCAPE, "");
   const trimmed = text.trim();
@@ -477,6 +515,9 @@ export async function scanFile(file, sinceMs, limits, onMatch) {
   let stale = 0;
   let lastTs = null;
   let sawTimestamp = false;
+  // Severity of the most recent record that declared one. Continuation lines
+  // inherit it so a warning's traceback stays a warning (see declaredLevel).
+  let activeRecordLevel = null;
   // Matches are held until the whole file is read: whether an undated line is
   // current or an archival copy is only decidable once we know whether the file
   // ever stamps its lines. Bounded by maxMatchesPerFile, so memory stays flat.
@@ -510,7 +551,30 @@ export async function scanFile(file, sinceMs, limits, onMatch) {
         sawTimestamp = true;
         releaseHead(ts >= sinceMs);
       }
-      const level = classifyLine(line);
+      const declared = declaredLevel(line);
+      let level;
+      if (declared) {
+        activeRecordLevel = declared;
+        level = classifyLine(line);
+      } else if (activeRecordLevel && isContinuationLine(line)) {
+        // A traceback belongs to the record above it. Inheriting its severity
+        // keeps warnings warning-level and INFO replays informational; an
+        // ERROR/CRITICAL/FATAL record keeps the keyword judgement, so its
+        // frames are counted exactly as before.
+        level = classifyLine(line);
+        if (activeRecordLevel === "WARN" || activeRecordLevel === "WARNING") {
+          if (level === "error") level = "warn";
+        } else if (
+          activeRecordLevel !== "ERROR" &&
+          activeRecordLevel !== "CRITICAL" &&
+          activeRecordLevel !== "FATAL"
+        ) {
+          level = null;
+        }
+      } else {
+        if (!isContinuationLine(line)) activeRecordLevel = null;
+        level = classifyLine(line);
+      }
       if (!level) continue;
       if (lastTs != null && lastTs < sinceMs) {
         stale += 1;
@@ -518,8 +582,12 @@ export async function scanFile(file, sinceMs, limits, onMatch) {
       }
       const match = { lineNo, level, text: line };
       if (lastTs == null) {
-        headPending.push(match);
-        if (headPending.length >= limits.maxMatchesPerFile) break;
+        // Cap the buffer but keep reading: whether this undated head is stale
+        // history or live output is decided by the first timestamp that follows.
+        // Breaking here skipped that decision, so a 15k-line stale head was
+        // counted as current (check-funding_rate_api: exactly 500 of 3872
+        // `ModuleNotFoundError` frames, the per-file cap).
+        if (headPending.length < limits.maxMatchesPerFile) headPending.push(match);
       } else if (level === "error") {
         // Only error lines need the buffered copy: the cap exists to bound
         // memory, and letting a chatty WARNING stream consume it silently
