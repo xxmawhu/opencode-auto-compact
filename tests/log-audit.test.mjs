@@ -338,6 +338,57 @@ test("parseLeadingTimestamp reads common log prefixes", () => {
   );
 });
 
+test("parseLeadingTimestamp reads shell date banners", () => {
+  // Real shape: predict-1h-direction/scripts/retrain.sh stamps each attempt
+  // with `date` output, so the traceback below it belongs to the banner time.
+  assert.equal(
+    parseLeadingTimestamp("[retrain] === Sat Nov 21 06:00:01 AM UTC 2026 ==="),
+    Date.UTC(2026, 10, 21, 6, 0, 1),
+  );
+  assert.equal(
+    parseLeadingTimestamp("[retrain] === Sat Nov 21 06:58:30 PM UTC 2026 ==="),
+    Date.UTC(2026, 10, 21, 18, 58, 30),
+  );
+  assert.equal(
+    parseLeadingTimestamp("[retrain] === Sat Nov 21 12:05:00 AM GMT 2026 ==="),
+    Date.UTC(2026, 10, 21, 0, 5, 0),
+  );
+});
+
+test("scanFile dates a traceback by the shell banner above it", async () => {
+  const tmp = makeFixtureDir("audit-shell-banner");
+  try {
+    const dir = path.join(tmp, "log", "app");
+    await fs.promises.mkdir(dir, { recursive: true });
+    const limits = { maxFileBytes: 10 * 1024 * 1024, maxMatchesPerFile: 500 };
+    const since = Date.now() - 24 * 3600 * 1000;
+    const stamp = (d) =>
+      `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")} ` +
+      `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+    const file = path.join(dir, "retrain.log");
+    // The banner is far older than the window; the later loguru line is
+    // current. The traceback between them must stay stale, not surfacing as a
+    // fresh error on every run.
+    await fs.promises.writeFile(
+      file,
+      [
+        "[retrain] === Fri May  1 08:00:00 AM UTC 2026 ===",
+        "Traceback (most recent call last):",
+        "ModuleNotFoundError: No module named 'dill'",
+        `${stamp(new Date(Date.now() - 60_000))} | INFO | retrain | completed successfully`,
+        "",
+      ].join("\n"),
+    );
+    const seen = [];
+    const result = await scanFile(file, since, limits, (m) => seen.push(m.level));
+    assert.deepEqual(seen, []);
+    assert.equal(result.matches, 0);
+    assert.equal(result.stale, 2);
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("parseLeadingTimestamp returns null for continuation lines", () => {
   assert.equal(parseLeadingTimestamp("Traceback (most recent call last):"), null);
   assert.equal(parseLeadingTimestamp('  File "x.py", line 3, in <module>'), null);

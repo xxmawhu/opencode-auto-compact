@@ -439,8 +439,46 @@ const TS_PATTERNS = [
   /^\[?(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:[.,](\d{1,6}))?(?:Z|[+-]\d{2}:?\d{2})?\]?/,
 ];
 
+// Shell entrypoints stamp a run with `date` output instead of a log prefix, e.g.
+// `[retrain] === Sat Nov 21 06:00:01 AM UTC 2026 ===`. The banner dates the
+// undated traceback that follows it; without parsing it, the head block would
+// inherit the first loguru timestamp (06:58, inside the window) and the stale
+// 06:00 failure was re-reported every day (predict-1h-direction: 2 phantom
+// lines/day for 4 days). UTC/GMT is explicit in this format, so Date.UTC is
+// safe regardless of the host timezone.
+const SHELL_BANNER_TS =
+  /^\[[^\]]*\]\s*=+\s*[A-Z][a-z]{2}\s+([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{2}):(\d{2}):(\d{2})\s+(AM|PM)\s+(?:UTC|GMT)\s+(\d{4})\b/;
+const MONTH_INDEX = {
+  Jan: 0,
+  Feb: 1,
+  Mar: 2,
+  Apr: 3,
+  May: 4,
+  Jun: 5,
+  Jul: 6,
+  Aug: 7,
+  Sep: 8,
+  Oct: 9,
+  Nov: 10,
+  Dec: 11,
+};
+
+function parseShellBanner(match) {
+  const [, mon, day, hh, mm, ss, meridiem, year] = match;
+  const month = MONTH_INDEX[mon];
+  if (month === undefined) return null;
+  const hour = (Number(hh) % 12) + (meridiem === "PM" ? 12 : 0);
+  const stamp = Date.UTC(Number(year), month, Number(day), hour, Number(mm), Number(ss));
+  return Number.isFinite(stamp) ? stamp : null;
+}
+
 export function parseLeadingTimestamp(line) {
   const text = String(line ?? "");
+  const banner = SHELL_BANNER_TS.exec(text);
+  if (banner) {
+    const stamp = parseShellBanner(banner);
+    if (stamp != null) return stamp;
+  }
   for (const pattern of TS_PATTERNS) {
     const match = pattern.exec(text);
     if (!match) continue;
