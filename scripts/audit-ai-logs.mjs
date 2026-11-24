@@ -174,6 +174,12 @@ const NOISE_PATTERNS = [
   // (opencode-issue-trigger verify-issues-confirm, 3 rows):
   //   PASS: 只读配置目录失败时日志记录了 ERROR 原因
   /^\s*PASS\s*[:：]/,
+  // An analysis report quotes the log record it is about, so the quoted record
+  // carries a level column of its own. Real sample (handle-log-error/
+  // ana-live-log-error, 1 line/day inside its INFO preview):
+  //   现象：2026-10-09 03:14:28.374 | ERROR | systemd_inspector.runner:run_check:78 - ...
+  // The reporting record is INFO; only the pasted excerpt is ERROR.
+  /^现象\s*[:：]/,
 ];
 
 export function isNoise(line) {

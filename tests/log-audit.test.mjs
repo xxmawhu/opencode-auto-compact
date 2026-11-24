@@ -148,6 +148,22 @@ test("classifyLine does not count mentions of the level in outcome metadata", ()
   assert.equal(classifyLine("ERROR: pre-commit not found in PATH"), "error");
 });
 
+test("classifyLine drops records quoted inside an analysis report", () => {
+  // Real sample from handle-log-error/ana-live-log-error (1 line/day): its INFO
+  // preview pastes the log record it analyzed, including that record's level
+  // column. The enclosing record is INFO, so the excerpt is not a failure now.
+  const quoted = [
+    "现象：2026-10-09 03:14:28.374 | ERROR | systemd_inspector.runner:run_check:78 - [backup_shm_data] set-systemd.py install failed: timeout (>900s)",
+    "现象：2026-11-24 06:25:04.971 | ERROR | fetch_exchange_change_notice_api.fetch.okx:fetch_okx_report:102 - okx fetch degraded reason=ssr_script_missing",
+  ];
+  for (const line of quoted) assert.equal(classifyLine(line), null, `expected noise: ${line}`);
+  // A real record that happens to mention the word in its body still counts.
+  assert.equal(
+    classifyLine("2026-11-24 06:25:04.971 | ERROR | __main__:run:316 - source degraded count=0"),
+    "error",
+  );
+});
+
 test("classifyLine drops report table rows and PASS outcome lines", () => {
   // Real samples from the 2026-11-20 13:00 audit run. Both are records about
   // outcomes or aggregates, and the exception/level word inside them is a
