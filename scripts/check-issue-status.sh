@@ -119,7 +119,7 @@ print("SKIPPED\t" + str(len(rows) - len(real)))
 		exit 0
 	fi
 
-	local -a changed=() unreachable=()
+	local -a changed=() unreachable=() unowned=()
 	local i status replied
 	for i in "${!ids[@]}"; do
 		id="${ids[$i]}"
@@ -141,6 +141,11 @@ print("SKIPPED\t" + str(len(rows) - len(real)))
 			if printf '%s\n' "${out}" | rg -q '^issue_id:'; then
 				break
 			fi
+			# A refusal is final: retrying cannot make another project's issue
+			# readable. Breaking here keeps the 2s retry for real transport misses.
+			if printf '%s\n' "${out}" | rg -q 'not related to caller project'; then
+				break
+			fi
 			if [[ "${attempt}" -eq 1 ]]; then
 				sleep 2
 			fi
@@ -149,6 +154,15 @@ print("SKIPPED\t" + str(len(rows) - len(real)))
 			status="$(printf '%s\n' "${out}" | awk '/^status:/{print $2; exit}')"
 			replied="$(printf '%s\n' "${out}" | awk '/^replied_at:/{print $2; exit}')"
 			[[ -n "${status}" ]] || status="unknown"
+		elif printf '%s\n' "${out}" | rg -q 'not related to caller project'; then
+			# The ledger also records issues that were forwarded to another
+			# project (2026-11-24: 4f646127 was filed by a forwarder, so
+			# `raise-issue status` answers "Permission denied: issue ... is not
+			# related to caller project" — reproduced 3/3). That refusal is a
+			# permanent ownership fact, not a query failure, so it must not be
+			# reported as an unreachable issue: one such row produced a daily
+			# `FAILED status unreachable for 1 of 63` self-audit error.
+			status="unowned"
 		fi
 		log_line info "${id} target=${targets[$i]} status=${status} replied_at=${replied}"
 		# "unreachable" is our own query failure, not a state change. Reporting it
@@ -157,10 +171,16 @@ print("SKIPPED\t" + str(len(rows) - len(real)))
 		# as an error so the outage stays visible in the run log.
 		if [[ "${status}" == "unreachable" ]]; then
 			unreachable+=("${id}")
+		elif [[ "${status}" == "unowned" ]]; then
+			unowned+=("${id}")
 		elif [[ "${status}" != "doing" || "${replied}" != "-" ]]; then
 			changed+=("| \`${id}\` | ${targets[$i]} | ${status} | ${replied} |")
 		fi
 	done
+
+	if [[ ${#unowned[@]} -gt 0 ]]; then
+		log_line info "skipped ${#unowned[@]} forwarded issue(s) not owned by caller: ${unowned[*]}"
+	fi
 
 	if [[ ${#unreachable[@]} -gt 0 ]]; then
 		log_line error "FAILED status unreachable for ${#unreachable[@]} of ${#ids[@]} issues: ${unreachable[*]}"

@@ -100,6 +100,52 @@ test("an unchanged status snapshot publishes no second digest", () => {
   }
 });
 
+// Regression test for the daily self-audit error line
+// `FAILED status unreachable for 1 of 63 issues: 4f646127-…` (2026-11-24).
+//
+// The ledger keeps forwarded issues: our project filed 8112bdcb and a forwarder
+// copied it to hftapi/trade-rule-updater-2611 as 4f646127, so the record's
+// sender is not this project. `raise-issue status` then answers "Permission
+// denied: issue … is not related to caller project" — reproduced 3/3 by hand —
+// while own issues answer normally. Counting that refusal as `unreachable`
+// turned a permanent ownership fact into one error line on every cron run.
+// The refusal must stay out of the change table and out of the error channel.
+test("a forwarded issue the caller cannot read is skipped, not reported as unreachable", () => {
+  removeArtifacts();
+  const forwarded = "4f646127-9a0f-4bbf-9bdf-186649d4d960";
+  const tmp = fs.mkdtempSync(path.join(ROOT, "tests", ".tmp-issue-status-unowned-"));
+  try {
+    const stub = path.join(tmp, "raise-issue");
+    fs.writeFileSync(
+      stub,
+      [
+        "#!/bin/bash",
+        `if [[ "$2" == "${forwarded}" ]]; then`,
+        '  printf "❌ status failed: Permission denied: issue %s is not related to caller project\\n" "$2" >&2',
+        "  exit 1",
+        "fi",
+        `printf 'issue_id:         %s\\nstatus:           done\\nreplied_at:       2026-11-19T00:00:00Z\\n' "$2"`,
+        "",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const run = runScript(stub, path.join(tmp, "stub-cwd.log"));
+    assert.equal(run.status, 0, run.stderr);
+
+    const log = fs.readFileSync(LOG, "utf8");
+    assert.doesNotMatch(log, /\[error\]/, "ownership refusal is not an error");
+    assert.match(
+      log,
+      new RegExp(`skipped 1 forwarded issue\\(s\\) not owned by caller: ${forwarded}`),
+    );
+    assert.match(log, new RegExp(`${forwarded} .* status=unowned`));
+    assert.ok(fs.existsSync(DIGEST), "own issues still publish a digest");
+    assert.doesNotMatch(fs.readFileSync(DIGEST, "utf8"), new RegExp(forwarded));
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    removeArtifacts();
+  }
+});
 // A TEST digest lists real ledger ids with fabricated statuses, so a leftover
 // from an interrupted test would be read by triage as a real transition. The
 // sweep runs before every audit; this test proves it removes the lookalikes and

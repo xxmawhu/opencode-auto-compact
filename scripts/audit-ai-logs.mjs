@@ -56,6 +56,12 @@ export const DEFAULTS = {
     "node_modules",
     ".git",
     ".var",
+    // Test trees never hold production logs, and their negative cases print
+    // `ERROR ...` on purpose. 2026-11-24: `hftapi/trade-rule-updater-2611/
+    // tests/.tmp/log/` supplied 5 of that project's 14 "error" lines, so the
+    // isolation fix requested in issue 7852625f could never show a clean log.
+    "test",
+    "tests",
     // `~/.local` trees hold per-account homes (`.local/bin/log`,
     // `.local/share/<tool>/log`). Their logs belong to the OpenCode/ULW-PM
     // runtime, not to a project under audit, and they duplicate every project.
@@ -371,6 +377,10 @@ export function discoverLogDirs(root, maxDepth, skipDirs, skipLogParents = new S
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
       if (skipDirs.has(entry.name)) continue;
+      // Per-test scratch trees (`tests/.tmp-*`, `.tmp-<suite>`) hold fixture and
+      // negative-case logs. They are ephemeral test artifacts, so auditing them
+      // reports deliberate failures as production errors.
+      if (entry.name.startsWith(".tmp")) continue;
       const child = path.join(dir, entry.name);
       if (entry.name === "log") {
         if (skipLogParents.has(path.basename(dir))) continue;

@@ -464,6 +464,27 @@ test("discoverLogDirs skips .local homes and scripts/log", async () => {
   }
 });
 
+// Test trees are not production logs. 2026-11-24: `tests/.tmp/log/` supplied 5
+// of trade-rule-updater-2611's 14 "error" lines, so the test-log isolation that
+// issue 7852625f asked for could never be verified as clean.
+test("discoverLogDirs skips tests/ and per-test .tmp* scratch dirs", async () => {
+  const tmp = makeFixtureDir("audit-skip-tests");
+  try {
+    await fs.promises.mkdir(path.join(tmp, "proj", "tests", ".tmp", "log"), { recursive: true });
+    await fs.promises.mkdir(path.join(tmp, "proj", "tests", "log"), { recursive: true });
+    await fs.promises.mkdir(path.join(tmp, "proj", ".tmp-suite", "log"), { recursive: true });
+    await fs.promises.mkdir(path.join(tmp, "proj", "log"), { recursive: true });
+    const found = discoverLogDirs(tmp, 6, new Set(["test", "tests", ".git"]), new Set(["scripts"]));
+    assert.deepEqual(
+      found.map((d) => path.relative(tmp, d)),
+      [path.join("proj", "log")],
+      "only the project runtime log is audited",
+    );
+  } finally {
+    await fs.promises.rm(tmp, { recursive: true, force: true });
+  }
+});
+
 test("collectLogFiles descends one level and skips archive subdirs", async () => {
   const tmp = makeFixtureDir("audit-nested");
   try {
