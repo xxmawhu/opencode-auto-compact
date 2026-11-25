@@ -66,6 +66,9 @@ repos:
       - id: shfmt
         name: shfmt
         entry: shfmt -w
+        # The scripts in this repo are written with two-space indentation; the
+        # tool default (tabs) would reindent whole files on every commit.
+        args: [--indent, "2"]
         language: system
         types: [shell]
         stages: [pre-commit]

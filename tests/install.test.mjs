@@ -146,6 +146,67 @@ test("install.sh is idempotent and keeps timestamps when content is unchanged", 
   }
 });
 
+test("install.sh treats a read-only config dir with current content as a no-op", async () => {
+  // A platform-owned config dir is not writable by the plugin account. When the
+  // deployed copy already equals this checkout there is nothing to do, so the
+  // run must succeed without touching timestamps.
+  const { root, repo, configDir } = sandbox();
+  try {
+    run([], repo, configDir);
+    const files = [
+      join(configDir, "plugin", "opencode-auto-compact.ts"),
+      join(configDir, "opencode-auto-compact-lib", "index.js"),
+      join(configDir, "opencode-auto-compact-lib", "package.json"),
+    ];
+    const before = files.map((file) => statSync(file).mtimeMs);
+    chmodSync(configDir, 0o555);
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+
+    const result = spawnSync("bash", [join(repo, "install.sh")], {
+      cwd: repo,
+      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir },
+      encoding: "utf8",
+    });
+
+    assert.equal(result.status, 0, `install failed: ${result.stderr}`);
+    assert.match(result.stdout, /not writable .*installed content already current/);
+    assert.deepEqual(
+      files.map((file) => statSync(file).mtimeMs),
+      before,
+      "a no-op deployment must keep file timestamps",
+    );
+  } finally {
+    chmodSync(configDir, 0o755);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("install.sh fails closed when the config dir is read-only and content is stale", () => {
+  // Reporting success here would leave the host on an older build, so the
+  // installer must fail and name the account that owns the target.
+  const { root, repo, configDir } = sandbox();
+  try {
+    run([], repo, configDir);
+    const libIndex = join(configDir, "opencode-auto-compact-lib", "index.js");
+    writeFileSync(libIndex, "// stale build\nexport default {};\n");
+    chmodSync(configDir, 0o555);
+
+    const result = spawnSync("bash", [join(repo, "install.sh")], {
+      cwd: repo,
+      env: { ...process.env, OPENCODE_CONFIG_DIR: configDir },
+      encoding: "utf8",
+    });
+
+    assert.notEqual(result.status, 0, "a stale read-only target must fail");
+    const output = `${result.stdout}${result.stderr}`;
+    assert.match(output, /not writable/);
+    assert.match(output, /differs from this checkout/);
+  } finally {
+    chmodSync(configDir, 0o755);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("install.sh repairs a stale library dir that is not world-traversable", () => {
   const { root, repo, configDir } = sandbox();
   try {

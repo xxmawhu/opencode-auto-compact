@@ -99,6 +99,13 @@ Environment:
                                   (default: ${XDG_CONFIG_HOME:-$HOME/.config}/opencode)
 
 The installer never builds, installs packages or edits opencode.json.
+
+A config directory this account cannot write (for example one owned by the
+platform account) is handled explicitly: when the installed entry and library
+already match this checkout the run succeeds as a no-op without touching file
+timestamps; when they differ the run fails and names the owner that has to
+deploy, so an outdated copy is never reported as installed.
+
 Restart OpenCode after installing so the plugin is loaded.
 EOF
 }
@@ -144,7 +151,7 @@ lib_is_current() {
   # verify_installed_permissions enforces the same bits.
   local dir_mode
   dir_mode="$(stat -c '%a' -- "${LIB_DIR}")"
-  (( (8#${dir_mode} & 8#005) == 8#005 )) || return 1
+  (((8#${dir_mode} & 8#005) == 8#005)) || return 1
   local expected actual
   expected="$(cd -- "${staged}" && printf '%s\n' * | sort)"
   actual="$(cd -- "${LIB_DIR}" && printf '%s\n' * | sort)"
@@ -154,8 +161,43 @@ lib_is_current() {
     [[ -f "${staged}/${name}" && -f "${LIB_DIR}/${name}" ]] || return 1
     cmp -s -- "${staged}/${name}" "${LIB_DIR}/${name}" || return 1
     file_mode="$(stat -c '%a' -- "${LIB_DIR}/${name}")"
-    (( (8#${file_mode} & 8#004) == 8#004 )) || return 1
+    (((8#${file_mode} & 8#004) == 8#004)) || return 1
   done <<<"${expected}"
+  return 0
+}
+
+# True when the installed entry and library already equal what this checkout
+# would deploy. Only used for a config dir this account cannot write: a
+# deployment there is a no-op when nothing changed and a hard failure when the
+# host would otherwise keep running an older build.
+installed_is_current() {
+  local name
+  [[ -d "${DIST_DIR}" ]] || return 1
+  [[ -f "${V1_ENTRY}" ]] && cmp -s -- "${V1_SOURCE}" "${V1_ENTRY}" || return 1
+  [[ -d "${LIB_DIR}" ]] || return 1
+  [[ -f "${LIB_DIR}/index.mjs" && -f "${LIB_DIR}/package.json" ]] || return 1
+
+  local expected actual
+  expected="$(
+    cd -- "${DIST_DIR}" && printf '%s\n' *.js
+    printf '%s\n' index.mjs package.json
+  )"
+  expected="$(printf '%s\n' "${expected}" | sort)"
+  actual="$(cd -- "${LIB_DIR}" && printf '%s\n' * | sort)"
+  [[ "${expected}" == "${actual}" ]] || return 1
+
+  while IFS= read -r name; do
+    [[ "${name}" == "index.mjs" || "${name}" == "package.json" ]] && continue
+    cmp -s -- "${DIST_DIR}/${name}" "${LIB_DIR}/${name}" || return 1
+  done <<<"${expected}"
+
+  cmp -s -- "${LIB_DIR}/index.mjs" <(
+    printf '%s\n' 'export { default } from "./index.js";'
+    printf '%s\n' 'export * from "./index.js";'
+  ) || return 1
+  cmp -s -- "${LIB_DIR}/package.json" <(
+    printf '{\n  "name": "%s",\n  "type": "module"\n}\n' "${PLUGIN_NAME}"
+  ) || return 1
   return 0
 }
 
@@ -185,10 +227,10 @@ verify_installed_permissions() {
     [[ -e "${path}" ]] || die "missing installed path: ${path}"
     mode="$(stat -c '%a' -- "${path}")"
     if [[ -d "${path}" ]]; then
-      (( (8#${mode} & 8#005) == 8#005 )) ||
+      (((8#${mode} & 8#005) == 8#005)) ||
         die "installed dir is not traversable by other users: ${path} (mode ${mode}, owner $(stat -c '%U' -- "${path}"), running as $(id -un))"
     else
-      (( (8#${mode} & 8#004) == 8#004 )) ||
+      (((8#${mode} & 8#004) == 8#004)) ||
         die "installed file is not readable by other users: ${path} (mode ${mode}, owner $(stat -c '%U' -- "${path}"), running as $(id -un))"
     fi
   done
@@ -203,13 +245,31 @@ verify_single_entry() {
     [[ -e "${path}" || -L "${path}" ]] || continue
     count=$((count + 1))
   done
-  (( count == 1 )) || die "expected exactly 1 plugin entry in scan dirs, found ${count}"
+  ((count == 1)) || die "expected exactly 1 plugin entry in scan dirs, found ${count}"
 }
 
 install_plugin() {
   [[ -f "${DIST_DIR}/index.js" ]] ||
     die "dist/index.js is missing. Build it first: npm ci && npm run build"
   [[ -f "${V1_SOURCE}" ]] || die "missing entry template: ${V1_SOURCE}"
+
+  # The config dir can belong to another account (platform-owned install area).
+  # Writing is then impossible, so the run is either a verified no-op or a hard
+  # failure; it must never report success while the host runs an older build.
+  if [[ -d "${CONFIG_DIR}" && ! -w "${CONFIG_DIR}" ]]; then
+    local owner
+    owner="$(stat -c '%U' -- "${CONFIG_DIR}" 2>/dev/null || printf 'unknown')"
+    if installed_is_current; then
+      verify_single_entry
+      verify_installed_permissions
+      # [log-review] warn not error: a read-only config dir owned by the
+      # platform account is an accepted environment state, and the deployed
+      # content already equals this checkout, so nothing is stale or lost.
+      log warn "config dir ${CONFIG_DIR} is not writable by $(id -un) (owner ${owner}); installed content already current, deployment skipped"
+      return 0
+    fi
+    die "config dir ${CONFIG_DIR} is not writable by $(id -un) (owner ${owner}) and installed content differs from this checkout; ${owner} must deploy: bash install.sh"
+  fi
 
   local mkdir_error
   if ! mkdir_error="$(mkdir -p -- "${V1_DIR}" "${V2_DIR}" 2>&1)"; then
@@ -330,18 +390,18 @@ uninstall_plugin() {
 
 main() {
   case "${1:-}" in
-    -h | --help)
-      usage
-      ;;
-    --uninstall)
-      uninstall_plugin
-      ;;
-    "")
-      install_plugin
-      ;;
-    *)
-      die "unknown argument: $1 (try --help)"
-      ;;
+  -h | --help)
+    usage
+    ;;
+  --uninstall)
+    uninstall_plugin
+    ;;
+  "")
+    install_plugin
+    ;;
+  *)
+    die "unknown argument: $1 (try --help)"
+    ;;
   esac
 }
 
