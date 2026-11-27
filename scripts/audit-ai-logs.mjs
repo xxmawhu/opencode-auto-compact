@@ -186,6 +186,15 @@ const NOISE_PATTERNS = [
   //   现象：2026-10-09 03:14:28.374 | ERROR | systemd_inspector.runner:run_check:78 - ...
   // The reporting record is INFO; only the pasted excerpt is ERROR.
   /^现象\s*[:：]/,
+  // pytest verbose result rows state the outcome at the end of the node id, and a
+  // test *name* may legitimately contain an exception class. Real sample
+  // (pylib/tool-box-951/toolbox commit-hook.log, 4 rows/day):
+  //   tests/test_rclone_retry.py::TestExtractFinalError::test_empty_stderr_returns_empty PASSED [ 15%]
+  // `TestExtractFinalError` matched the exception-class pattern, so four passing
+  // tests were counted as errors. Only a passing/skipping outcome is noise here:
+  // `FAILED`/`ERROR` rows stay countable (their traceback lines carry the class).
+  // The `::` requirement keeps ordinary prose ending in `PASSED` out of reach.
+  /::\S*\s+(?:PASSED|SKIPPED|XPASS)(?:\s+\[\s*\d+%\])?\s*$/,
 ];
 
 export function isNoise(line) {

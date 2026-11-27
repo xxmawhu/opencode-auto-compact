@@ -188,6 +188,32 @@ test("classifyLine drops report table rows and PASS outcome lines", () => {
   assert.equal(classifyLine("row 3: ValueError: bad axis"), "error");
 });
 
+test("classifyLine drops passing pytest rows whose test name names an exception", () => {
+  // Real sample from pylib/tool-box-951/toolbox/log/commit-hook.log (2026-11-26,
+  // 4 rows/day): the test class `TestExtractFinalError` matched the
+  // exception-class pattern, so four PASSING tests were reported as errors and
+  // the project showed up in the digest with a false signature.
+  const passing = [
+    "tests/test_rclone_retry.py::TestExtractFinalError::test_empty_stderr_returns_empty PASSED [ 15%]",
+    "tests/test_rclone_retry.py::TestExtractFinalError::test_filters_rclone_error_and_attempt_lines PASSED [ 16%]",
+    "tests/test_rclone_retry.py::TestExtractFinalError::test_keeps_last_line_when_all_process_lines PASSED [ 17%]",
+    "tests/test_rclone_retry.py::TestExtractFinalError::test_rsync_error_summary_kept PASSED [ 19%]",
+    // Shapes without the trailing percentage, and the skipping outcomes.
+    "tests/a.py::TestKeyError::test_lookup PASSED",
+    "tests/test_set_systemd.py::TestPathUnitGenerator::test_watch SKIPPED [  5%]",
+    "tests/a.py::ForbiddenErrorTest::test_x XPASS [ 7%]",
+  ];
+  for (const line of passing) assert.equal(classifyLine(line), null, `expected noise: ${line}`);
+  // Failing rows keep counting: their traceback carries the exception class.
+  assert.equal(
+    classifyLine("tests/test_x.py::TestExtractFinalError::test_y FAILED [ 50%]"),
+    "error",
+  );
+  assert.equal(classifyLine("ERROR tests/test_set_systemd.py"), "error");
+  // Prose that merely ends in PASSED is untouched (no `::` node id).
+  assert.equal(classifyLine("deploy finished: PASSED"), null);
+});
+
 test("classifyLine judges structured records by declared level/status", () => {
   const pass = JSON.stringify({ status: "PASS", checks: [{ expected: "日志含 ERROR 级别" }] });
   assert.equal(classifyLine(pass), null);
