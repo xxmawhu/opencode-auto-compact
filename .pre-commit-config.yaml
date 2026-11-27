@@ -48,6 +48,14 @@ repos:
         always_run: true
         stages: [pre-commit]
 
+      - id: verify-gate-tests
+        name: verification gate tests
+        entry: node --test tests/verify-get-task-log-shards.test.mjs
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+
   # --- Bash ---
   # SC2016 is disabled on purpose: the audit digests embed literal `path`
   # examples inside printf single quotes, where expansion is not intended.
